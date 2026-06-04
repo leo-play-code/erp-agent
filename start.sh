@@ -64,6 +64,17 @@ if [ -n "${RAG_WATCH_DIR:-}" ]; then
   fi
 fi
 
+# 5) Presenton 簡報引擎（選用）：有 Docker 且 .env 設了 PRESENTON_URL 才自動帶起
+if grep -qE '^PRESENTON_URL=' .env 2>/dev/null && [ -f docker-compose.yml ]; then
+  if command -v docker >/dev/null 2>&1; then
+    docker compose up -d >/dev/null 2>&1 \
+      && echo "  ✓ Presenton 已啟動 (docker compose)" \
+      || echo "  · Presenton 啟動失敗（檢查 Docker 是否在跑 / .env 的 OPENAI_API_KEY）"
+  else
+    echo "  · 無 Docker，略過 Presenton（ppt 會用內建版型）"
+  fi
+fi
+
 echo ""
 echo "✅ 完成。前端 http://localhost:${FRONTEND_PORT}　｜　API http://localhost:${API_PORT}"
 echo "   停止全部：bash stop.sh"

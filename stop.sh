@@ -9,7 +9,9 @@ pkill -f "watch_rag.py" 2>/dev/null && echo "  ✓ RAG watcher 已停" || echo "
 
 if [ "${1:-}" = "--all" ]; then
   bash db/pg.sh stop 2>/dev/null && echo "  ✓ PostgreSQL 已停" || echo "  · PostgreSQL 未在跑"
+  if command -v docker >/dev/null 2>&1 && [ -f docker-compose.yml ]; then
+    docker compose down >/dev/null 2>&1 && echo "  ✓ Presenton 已停" || echo "  · Presenton 未在跑"
+  fi
 else
-  echo "  · PostgreSQL 保留運轉（要一起停：bash stop.sh --all）"
+  echo "  · PostgreSQL / Presenton 保留運轉（要一起停：bash stop.sh --all）"
 fi
-echo "（Presenton 在 Docker，請自行 docker stop presenton）"

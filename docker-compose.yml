@@ -1,0 +1,29 @@
+# Presenton 簡報引擎（選用，erp-agent 的 ppt agent 用它產精緻可編輯 .pptx）。
+# 秘鑰從同目錄的 .env 讀（docker compose 會自動載入 .env 做 ${VAR} 代換），不進 repo。
+#
+# 用法（任何裝了 Docker 的機器）：
+#   docker compose up -d        # 啟動（背景；restart=unless-stopped，重開機自動回來）
+#   docker compose down         # 停止
+#   docker compose logs -f      # 看 log
+#
+# Port：容器內是 80。對外預設 5001（macOS 的 5000 被 AirPlay 佔用，故不用 5000）。
+#   要改用別的對外 port：在 .env 設 PRESENTON_PORT=xxxx，並把 PRESENTON_URL 同步改成 http://localhost:xxxx
+services:
+  presenton:
+    image: ghcr.io/presenton/presenton:latest
+    container_name: presenton
+    restart: unless-stopped
+    ports:
+      - "${PRESENTON_PORT:-5001}:80"
+    environment:
+      LLM: openai
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?需要在 .env 設 OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1}
+      IMAGE_PROVIDER: pexels
+      PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+      CAN_CHANGE_KEYS: "false"
+    volumes:
+      - presenton_data:/app_data
+
+volumes:
+  presenton_data:

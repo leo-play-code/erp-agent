@@ -1,0 +1,19 @@
+- generic [active] [ref=e1]:
+  - navigation [ref=e2]:
+    - generic [ref=e3]:
+      - link "ERP AI 助理" [ref=e4] [cursor=pointer]:
+        - /url: /
+        - generic [ref=e6]: ERP AI 助理
+      - generic [ref=e7]:
+        - link "單一 Agent" [ref=e8] [cursor=pointer]:
+          - /url: /single
+        - link "多 Agent 對話" [ref=e9] [cursor=pointer]:
+          - /url: /chat
+        - link "知識庫後台" [ref=e10] [cursor=pointer]:
+          - /url: /admin
+  - main [ref=e11]:
+    - generic [ref=e12]:
+      - heading "單一 Agent" [level=1] [ref=e13]
+      - paragraph [ref=e14]: 選一個 Agent 點進去，提供需求即可直接處理。
+      - paragraph [ref=e15]: 載入中…
+  - alert [ref=e16]
