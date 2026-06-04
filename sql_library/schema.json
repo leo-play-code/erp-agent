@@ -1,0 +1,132 @@
+{
+  "_comment": "資料庫 schema 的單一結構化來源。新增資料表只要在 tables 加一筆（name/domain/group/desc/schema），full_schema_text() 與 find_tables 都會自動吃到；schema 字串裡用『→』標外鍵、用括號標中文欄義與合法值。glossary 放常用 KPI 算法。",
+  "tables": [
+    {
+      "name": "departments",
+      "domain": "人資 HR",
+      "group": "",
+      "desc": "部門主檔：部門名稱與主管",
+      "schema": "departments(id, name 部門, manager 主管)"
+    },
+    {
+      "name": "employees",
+      "domain": "人資 HR",
+      "group": "",
+      "desc": "員工主檔：員編、姓名、部門、職稱、到職日、在職狀態",
+      "schema": "employees(id, emp_no 員編, name, gender, email, department_id→departments.id, title 職稱, hire_date 到職日, status 在職/留職停薪/離職)"
+    },
+    {
+      "name": "leave_balances",
+      "domain": "人資 HR",
+      "group": "",
+      "desc": "特休餘額：每位員工每年的特休總額、已用、剩餘",
+      "schema": "leave_balances(id, employee_id→employees.id, year, annual_quota 特休總額, annual_used 已用, annual_remaining 特休剩餘)"
+    },
+    {
+      "name": "leave_records",
+      "domain": "人資 HR",
+      "group": "",
+      "desc": "請假紀錄：誰請了什麼假、起迄、天數、簽核狀態",
+      "schema": "leave_records(id, employee_id→employees.id, leave_type 假別(特休/事假/病假/婚假/喪假), start_date, end_date, days, status 狀態(已核准/待審核/已駁回))"
+    },
+    {
+      "name": "customers",
+      "domain": "製造業營運 Manufacturing（時序 2025-01 ~ 2026-06）",
+      "group": "主檔",
+      "desc": "客戶主檔：地區、產業、信用額度",
+      "schema": "customers(id, code, name 客戶, region 地區, industry 產業, credit_limit 信用額度, active)"
+    },
+    {
+      "name": "suppliers",
+      "domain": "製造業營運 Manufacturing（時序 2025-01 ~ 2026-06）",
+      "group": "主檔",
+      "desc": "供應商主檔：供料類別、星等評等、準交率、付款條件",
+      "schema": "suppliers(id, code, name 供應商, region, material_category, rating 星等, on_time_rate 準交率%, payment_terms)"
+    },
+    {
+      "name": "products",
+      "domain": "製造業營運 Manufacturing（時序 2025-01 ~ 2026-06）",
+      "group": "主檔",
+      "desc": "產品主檔：售價、成本、量產狀態",
+      "schema": "products(id, sku, name, category 類別, unit_price 售價, unit_cost 成本, status 量產/試產/停產)"
+    },
+    {
+      "name": "materials",
+      "domain": "製造業營運 Manufacturing（時序 2025-01 ~ 2026-06）",
+      "group": "主檔",
+      "desc": "原料主檔：單位成本、安全庫存",
+      "schema": "materials(id, code, name 原料, category, unit, unit_cost 單位成本, safety_stock 安全庫存)"
+    },
+    {
+      "name": "bom",
+      "domain": "製造業營運 Manufacturing（時序 2025-01 ~ 2026-06）",
+      "group": "主檔",
+      "desc": "物料清單 BOM：一個產品用到哪些原料、單位用量",
+      "schema": "bom(id, product_id→products.id, material_id→materials.id, qty_per_unit 單位用量)"
+    },
+    {
+      "name": "machines",
+      "domain": "製造業營運 Manufacturing（時序 2025-01 ~ 2026-06）",
+      "group": "主檔",
+      "desc": "機台主檔：線別、製程、時產能",
+      "schema": "machines(id, code, name 機台, line 線別, type 製程, status, capacity_per_hour 時產能)"
+    },
+    {
+      "name": "inventory",
+      "domain": "製造業營運 Manufacturing（時序 2025-01 ~ 2026-06）",
+      "group": "主檔",
+      "desc": "庫存快照：產品/原料在各倉的在庫量與單位成本（單一快照日）",
+      "schema": "inventory(id, item_type 'product'/'material', item_id, item_name, warehouse 倉, qty_on_hand 在庫量, unit_cost, as_of_date)"
+    },
+    {
+      "name": "sales_orders",
+      "domain": "製造業營運 Manufacturing（時序 2025-01 ~ 2026-06）",
+      "group": "交易",
+      "desc": "銷售訂單：客戶、業務、下單/要求交期/出貨日、金額、出貨狀態",
+      "schema": "sales_orders(id, so_no, customer_id→customers.id, sales_rep_emp_id→employees.id, order_date, required_date 要求交期, ship_date 出貨日, status 已出貨/生產中/已取消, total_amount)"
+    },
+    {
+      "name": "sales_order_items",
+      "domain": "製造業營運 Manufacturing（時序 2025-01 ~ 2026-06）",
+      "group": "交易",
+      "desc": "銷售訂單明細：每張訂單的產品、數量、單價、金額",
+      "schema": "sales_order_items(id, sales_order_id→sales_orders.id, product_id→products.id, qty, unit_price, amount)"
+    },
+    {
+      "name": "purchase_orders",
+      "domain": "製造業營運 Manufacturing（時序 2025-01 ~ 2026-06）",
+      "group": "交易",
+      "desc": "採購單：供應商、下單/預計到貨/實際到貨、金額、入庫狀態",
+      "schema": "purchase_orders(id, po_no, supplier_id→suppliers.id, order_date, expected_date 預計到貨, received_date 實際到貨, status 已入庫/已下單/已取消, total_amount)"
+    },
+    {
+      "name": "purchase_order_items",
+      "domain": "製造業營運 Manufacturing（時序 2025-01 ~ 2026-06）",
+      "group": "交易",
+      "desc": "採購單明細：每張採購單的原料、數量、單位成本、金額",
+      "schema": "purchase_order_items(id, purchase_order_id→purchase_orders.id, material_id→materials.id, qty, unit_cost, amount)"
+    },
+    {
+      "name": "production_orders",
+      "domain": "製造業營運 Manufacturing（時序 2025-01 ~ 2026-06）",
+      "group": "交易",
+      "desc": "生產工單（製令）：產品、機台、計畫量、良品、報廢、起迄、完工狀態",
+      "schema": "production_orders(id, wo_no 製令, product_id→products.id, machine_id→machines.id, planned_qty 計畫量, good_qty 良品, scrap_qty 報廢, start_date, end_date, status 已完工/生產中)"
+    },
+    {
+      "name": "quality_inspections",
+      "domain": "製造業營運 Manufacturing（時序 2025-01 ~ 2026-06）",
+      "group": "交易",
+      "desc": "品質檢驗：抽樣數、不良數、合格與否、不良類型（對應某張工單）",
+      "schema": "quality_inspections(id, production_order_id→production_orders.id, inspect_date, sample_size 抽樣數, defect_count 不良數, result 合格/不合格, defect_type 不良類型)"
+    },
+    {
+      "name": "machine_downtime",
+      "domain": "製造業營運 Manufacturing（時序 2025-01 ~ 2026-06）",
+      "group": "交易",
+      "desc": "機台停機紀錄：停機時數與原因",
+      "schema": "machine_downtime(id, machine_id→machines.id, log_date, downtime_hours 停機時數, reason 原因)"
+    }
+  ],
+  "glossary": "常用指標算法：\n- 毛利率 = (sum(item.amount) - sum(item.qty*product.unit_cost)) / sum(item.amount)\n- 準交率 = 出貨單中 ship_date<=required_date 的比例（status='已出貨'）\n- 生產良率 = good_qty/(good_qty+scrap_qty)；報廢率 = scrap_qty/(good_qty+scrap_qty)\n- 品質不良率 = sum(defect_count)/sum(sample_size)\n- 供應商準交 = 採購單 received_date<=expected_date 的比例\n- 庫存金額 = qty_on_hand*unit_cost；安全庫存預警 = 原料在庫 < safety_stock\n- 客戶/產品集中度 = 各客戶或產品營收佔比"
+}

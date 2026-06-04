@@ -1,0 +1,165 @@
+{
+  "queries": [
+    {
+      "id": "leave_recent",
+      "domain": "hr",
+      "question": "最近有誰請假？近期的請假紀錄",
+      "note": "依開始日由新到舊，含所有狀態（已核准/待審核/已駁回）。",
+      "sql": "SELECT e.name AS 員工, lr.leave_type AS 假別, lr.start_date AS 起, lr.end_date AS 迄, lr.days AS 天數, lr.status AS 狀態 FROM leave_records lr JOIN employees e ON e.id = lr.employee_id ORDER BY lr.start_date DESC LIMIT 20"
+    },
+    {
+      "id": "leave_pending",
+      "domain": "hr",
+      "question": "有哪些請假還在等待審核？待簽核的請假",
+      "note": "status 的待審核值就是『待審核』。",
+      "sql": "SELECT e.name AS 員工, lr.leave_type AS 假別, lr.start_date AS 起, lr.end_date AS 迄, lr.days AS 天數 FROM leave_records lr JOIN employees e ON e.id = lr.employee_id WHERE lr.status = '待審核' ORDER BY lr.start_date DESC"
+    },
+    {
+      "id": "leave_type_summary",
+      "domain": "hr",
+      "question": "各種假別的請假統計？哪種假最多人請",
+      "note": "假別值：特休/事假/病假/婚假/喪假。",
+      "sql": "SELECT leave_type AS 假別, count(*) AS 件數, sum(days) AS 總天數 FROM leave_records GROUP BY leave_type ORDER BY 件數 DESC"
+    },
+    {
+      "id": "annual_leave_remaining_top",
+      "domain": "hr",
+      "question": "特休剩餘天數最多的員工？誰特休還很多沒休",
+      "note": "leave_balances 只有最新年度資料；以最大年度為準。",
+      "sql": "SELECT e.name AS 員工, lb.annual_remaining AS 特休剩餘, lb.annual_quota AS 特休總額, lb.annual_used AS 已用 FROM leave_balances lb JOIN employees e ON e.id = lb.employee_id WHERE lb.year = (SELECT max(year) FROM leave_balances) ORDER BY lb.annual_remaining DESC LIMIT 10"
+    },
+    {
+      "id": "headcount_by_dept",
+      "domain": "hr",
+      "question": "各部門有多少在職員工？部門人數分布",
+      "note": "在職狀態值為『在職』。",
+      "sql": "SELECT d.name AS 部門, count(*) AS 在職人數 FROM employees e JOIN departments d ON d.id = e.department_id WHERE e.status = '在職' GROUP BY d.name ORDER BY 在職人數 DESC"
+    },
+    {
+      "id": "non_active_employees",
+      "domain": "hr",
+      "question": "有哪些員工留職停薪或離職？非在職名單",
+      "note": "員工狀態值：在職/留職停薪/離職。",
+      "sql": "SELECT e.name AS 員工, e.title AS 職稱, d.name AS 部門, e.status AS 狀態 FROM employees e JOIN departments d ON d.id = e.department_id WHERE e.status IN ('留職停薪', '離職') ORDER BY e.status, d.name"
+    },
+    {
+      "id": "new_hires_recent",
+      "domain": "hr",
+      "question": "最近一年新報到的員工有誰？新進人員",
+      "note": "以到職日 hire_date 在近 365 天內判定。",
+      "sql": "SELECT e.name AS 員工, e.title AS 職稱, d.name AS 部門, e.hire_date AS 到職日 FROM employees e JOIN departments d ON d.id = e.department_id WHERE e.hire_date >= CURRENT_DATE - INTERVAL '365 days' ORDER BY e.hire_date DESC"
+    },
+    {
+      "id": "dept_managers",
+      "domain": "hr",
+      "question": "各部門的主管是誰？部門清單",
+      "note": "departments.manager 直接存主管名稱。",
+      "sql": "SELECT name AS 部門, manager AS 主管 FROM departments ORDER BY name"
+    },
+    {
+      "id": "revenue_by_month",
+      "domain": "mfg",
+      "question": "每月營收多少？營收趨勢、月營業額",
+      "note": "排除已取消訂單；訂單狀態值：已出貨/生產中/已取消。",
+      "sql": "SELECT to_char(order_date, 'YYYY-MM') AS 月份, round(sum(total_amount)) AS 營收, count(*) AS 訂單數 FROM sales_orders WHERE status <> '已取消' GROUP BY 1 ORDER BY 1"
+    },
+    {
+      "id": "top_customers_by_revenue",
+      "domain": "mfg",
+      "question": "營收最高的客戶？大客戶排名、客戶貢獻",
+      "note": "排除已取消訂單。",
+      "sql": "SELECT c.name AS 客戶, round(sum(so.total_amount)) AS 營收, count(*) AS 訂單數 FROM sales_orders so JOIN customers c ON c.id = so.customer_id WHERE so.status <> '已取消' GROUP BY c.name ORDER BY 營收 DESC LIMIT 10"
+    },
+    {
+      "id": "top_products_by_revenue",
+      "domain": "mfg",
+      "question": "賣最好的產品？暢銷品、產品營收排名",
+      "note": "用 sales_order_items.amount 加總，排除已取消訂單。",
+      "sql": "SELECT p.name AS 產品, round(sum(soi.amount)) AS 營收, sum(soi.qty) AS 數量 FROM sales_order_items soi JOIN products p ON p.id = soi.product_id JOIN sales_orders so ON so.id = soi.sales_order_id WHERE so.status <> '已取消' GROUP BY p.name ORDER BY 營收 DESC LIMIT 10"
+    },
+    {
+      "id": "gross_margin_overall",
+      "domain": "mfg",
+      "question": "整體毛利率是多少？公司毛利",
+      "note": "毛利率 =（營收 - 成本）/ 營收；成本 = 售出數量 × 產品單位成本。",
+      "sql": "SELECT round(sum(soi.amount)) AS 營收, round(sum(soi.qty * p.unit_cost)) AS 成本, round((sum(soi.amount) - sum(soi.qty * p.unit_cost)) / nullif(sum(soi.amount), 0) * 100, 1) AS 毛利率百分比 FROM sales_order_items soi JOIN products p ON p.id = soi.product_id JOIN sales_orders so ON so.id = soi.sales_order_id WHERE so.status <> '已取消'"
+    },
+    {
+      "id": "gross_margin_by_product",
+      "domain": "mfg",
+      "question": "各產品的毛利率？哪個產品最賺、毛利最低",
+      "note": "逐產品計算毛利率，由高到低。",
+      "sql": "SELECT p.name AS 產品, round((sum(soi.amount) - sum(soi.qty * p.unit_cost)) / nullif(sum(soi.amount), 0) * 100, 1) AS 毛利率百分比, round(sum(soi.amount)) AS 營收 FROM sales_order_items soi JOIN products p ON p.id = soi.product_id JOIN sales_orders so ON so.id = soi.sales_order_id WHERE so.status <> '已取消' GROUP BY p.name ORDER BY 毛利率百分比 DESC"
+    },
+    {
+      "id": "on_time_delivery_rate",
+      "domain": "mfg",
+      "question": "出貨準交率多少？訂單有沒有準時交貨",
+      "note": "準交 = 實際出貨日 ship_date <= 要求交期 required_date，只看已出貨訂單。",
+      "sql": "SELECT round(avg(CASE WHEN ship_date <= required_date THEN 1 ELSE 0 END) * 100, 1) AS 準交率百分比, count(*) AS 已出貨訂單數 FROM sales_orders WHERE status = '已出貨' AND ship_date IS NOT NULL"
+    },
+    {
+      "id": "production_yield_overall",
+      "domain": "mfg",
+      "question": "整體生產良率？報廢率多少",
+      "note": "良率 = 良品 /（良品 + 報廢），只看已完工工單。",
+      "sql": "SELECT round(sum(good_qty)::numeric / nullif(sum(good_qty + scrap_qty), 0) * 100, 1) AS 良率百分比, sum(good_qty) AS 良品, sum(scrap_qty) AS 報廢 FROM production_orders WHERE status = '已完工'"
+    },
+    {
+      "id": "yield_by_machine",
+      "domain": "mfg",
+      "question": "各機台的良率與報廢？哪台機器報廢最多",
+      "note": "逐機台計算良率，由低到高（最該關注的排前面）。",
+      "sql": "SELECT m.name AS 機台, round(sum(po.good_qty)::numeric / nullif(sum(po.good_qty + po.scrap_qty), 0) * 100, 1) AS 良率百分比, sum(po.scrap_qty) AS 報廢數 FROM production_orders po JOIN machines m ON m.id = po.machine_id WHERE po.status = '已完工' GROUP BY m.name ORDER BY 良率百分比 ASC"
+    },
+    {
+      "id": "quality_defect_rate",
+      "domain": "mfg",
+      "question": "品質不良率？品檢不合格多少",
+      "note": "不良率 = 不良數 / 抽樣數；result 不合格值為『不合格』。",
+      "sql": "SELECT round(sum(defect_count)::numeric / nullif(sum(sample_size), 0) * 100, 2) AS 不良率百分比, sum(CASE WHEN result = '不合格' THEN 1 ELSE 0 END) AS 不合格批次, count(*) AS 抽檢批次 FROM quality_inspections"
+    },
+    {
+      "id": "supplier_on_time_ranking",
+      "domain": "mfg",
+      "question": "供應商準交率排名？哪家供應商最準時、評等",
+      "note": "suppliers.on_time_rate 為準交率(%)，rating 為星等。",
+      "sql": "SELECT name AS 供應商, on_time_rate AS 準交率, rating AS 星等, material_category AS 供料類別 FROM suppliers ORDER BY on_time_rate DESC"
+    },
+    {
+      "id": "low_stock_alert",
+      "domain": "mfg",
+      "question": "哪些原料低於安全庫存？缺料預警、要補貨的料",
+      "note": "inventory 是單一快照；只看 item_type='material' 並與 materials.safety_stock 比較。",
+      "sql": "SELECT i.item_name AS 原料, i.qty_on_hand AS 在庫量, m.safety_stock AS 安全庫存, i.warehouse AS 倉 FROM inventory i JOIN materials m ON m.id = i.item_id WHERE i.item_type = 'material' AND i.qty_on_hand < m.safety_stock ORDER BY (m.safety_stock - i.qty_on_hand) DESC"
+    },
+    {
+      "id": "inventory_value_by_warehouse",
+      "domain": "mfg",
+      "question": "各倉庫的庫存金額？庫存總值",
+      "note": "庫存金額 = 在庫量 × 單位成本（單一快照）。",
+      "sql": "SELECT warehouse AS 倉, round(sum(qty_on_hand * unit_cost)) AS 庫存金額, count(*) AS 品項數 FROM inventory GROUP BY warehouse ORDER BY 庫存金額 DESC"
+    },
+    {
+      "id": "machine_downtime_top",
+      "domain": "mfg",
+      "question": "停機時數最多的機台？哪台機器最常壞",
+      "note": "加總 machine_downtime.downtime_hours。",
+      "sql": "SELECT m.name AS 機台, round(sum(md.downtime_hours), 1) AS 停機總時數, count(*) AS 次數 FROM machine_downtime md JOIN machines m ON m.id = md.machine_id GROUP BY m.name ORDER BY 停機總時數 DESC"
+    },
+    {
+      "id": "downtime_reasons",
+      "domain": "mfg",
+      "question": "停機原因分布？機台為什麼停機",
+      "note": "依 reason 彙總停機時數。",
+      "sql": "SELECT reason AS 原因, round(sum(downtime_hours), 1) AS 總時數, count(*) AS 次數 FROM machine_downtime GROUP BY reason ORDER BY 總時數 DESC"
+    },
+    {
+      "id": "open_production_orders",
+      "domain": "mfg",
+      "question": "目前還在生產中的工單有哪些？未完工製令",
+      "note": "production_orders.status 生產中值為『生產中』。",
+      "sql": "SELECT po.wo_no AS 製令, p.name AS 產品, m.name AS 機台, po.planned_qty AS 計畫量, po.start_date AS 開工日 FROM production_orders po JOIN products p ON p.id = po.product_id JOIN machines m ON m.id = po.machine_id WHERE po.status = '生產中' ORDER BY po.start_date"
+    }
+  ]
+}

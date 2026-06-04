@@ -1,0 +1,37 @@
+# 虛擬環境
+venv/
+.venv/
+env/
+
+# 環境變數（含 API Key，切勿提交）
+.env
+
+# 產出的檔案（簡報等）
+generated/
+
+# PostgreSQL 私有 cluster 資料目錄
+pgdata/
+
+# RAG 知識庫向量索引
+rag_index/
+
+# RAG 上傳的原始檔
+uploads/
+
+# Python 快取
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 編輯器
+.vscode/
+.idea/
+
+# ── 補充(原本漏掉)──
+node_modules/
+.env.*
+!.env.example
+.DS_Store
+
+# 執行期 log
+*.log
