@@ -98,12 +98,8 @@ export default function SinglePage() {
 
   return (
     <div className="container" style={{ padding: "56px 24px 80px" }}>
-      <h1 style={{ fontSize: 38, fontWeight: 800, letterSpacing: "-0.02em", margin: "0 0 8px" }}>
-        單一 Agent
-      </h1>
-      <p className="muted" style={{ fontSize: 18, margin: "0 0 36px" }}>
-        選一個 Agent 點進去，提供需求即可直接處理。
-      </p>
+      <h1 className="page-title">單一 Agent</h1>
+      <p className="muted page-lead">選一個 Agent 點進去，提供需求即可直接處理。</p>
 
       {listError && <p style={{ color: "#cd3d64" }}>⚠️ {listError}</p>}
       {agents.length === 0 && !listError && <p className="muted">載入中…</p>}

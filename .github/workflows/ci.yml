@@ -1,0 +1,71 @@
+name: CI
+
+# 在 push 到任何分支、以及對任何分支開 PR 時觸發
+on:
+  push:
+  pull_request:
+
+# 同一分支若連續推 commit，取消前一次還在跑的 CI（省資源）
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── 前端：lint（非阻擋）＋ 正式 build（型別檢查＋編譯，硬性把關）──
+  frontend:
+    name: 前端 (Next.js build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 安裝相依套件
+        run: npm ci
+
+      # lint 目前有一個既存的 react-hooks 警示（非本次改動），先設為不阻擋、純報告
+      - name: ESLint（informational）
+        run: npm run lint
+        continue-on-error: true
+
+      - name: 正式 build（含 TypeScript 型別檢查）
+        run: npm run build
+
+  # ── 後端：裝套件 → 語法檢查 → 不需 API Key 的 import 煙霧測試 ──
+  backend:
+    name: 後端 (Python import smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安裝相依套件
+        run: pip install -r requirements.txt
+
+      - name: 語法檢查（compileall）
+        run: python -m compileall -q agents tools graph api db sql_library watch_rag.py
+
+      # 用 dummy key 驗證 graph 與所有 Agent 能正確組裝、節點/路由自動接好（不連 DB、不打網路）
+      - name: Graph 接線煙霧測試
+        env:
+          OPENAI_API_KEY: sk-test-dummy
+        run: |
+          python -c "
+          from graph.erp_graph import erp_graph
+          from graph.registry import AGENTS
+          print('已登記 Agent:', list(AGENTS))
+          print('節點:', sorted(erp_graph.get_graph().nodes))
+          assert 'supervisor' in erp_graph.get_graph().nodes
+          assert set(AGENTS) <= set(erp_graph.get_graph().nodes)
+          "

@@ -73,7 +73,12 @@ type Conversation = {
 };
 
 const STORAGE_KEY = "erp_chats";
-const uid = () => crypto.randomUUID();
+// crypto.randomUUID() 只在安全情境（HTTPS / localhost）才有；用 IP 走 http 連時不存在，
+// 故退回以亂數+時間組出唯一字串，確保從別台電腦連也不會壞。
+const uid = () =>
+  typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `id-${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
 const newConv = (): Conversation => ({
   id: uid(),
   title: "新對話",
