@@ -11,7 +11,14 @@
 cd "$(dirname "$0")" || exit 1
 ROOT="$(pwd)"
 
-running() { ss -ltn 2>/dev/null | grep -qE ":$1(\s|$)"; }
+# 偵測某 port 有沒有在 listen（跨平台:macOS 用 lsof,Linux 退回 ss）
+running() {
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
+  else
+    ss -ltn 2>/dev/null | grep -qE ":$1(\s|$)"
+  fi
+}
 
 echo "▶ 啟動 erp-agent 服務…"
 

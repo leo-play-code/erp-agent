@@ -1,13 +1,8 @@
-// 與 FastAPI 後端溝通的小工具。後端網址優先用 NEXT_PUBLIC_API_URL；
-// 沒設時，自動用「使用者瀏覽器當下連到的主機名 + :8000」，這樣從別台電腦
-// 連 http://<伺服器IP>:3005 時，API 會打到同一台伺服器的 8000，而非使用者自己的 localhost。
-// （SSR 期間沒有 window，退回 localhost；實際的 fetch 都發生在瀏覽器端。）
-
-const BASE =
-  process.env.NEXT_PUBLIC_API_URL ||
-  (typeof window !== "undefined"
-    ? `${window.location.protocol}//${window.location.hostname}:8000`
-    : "http://localhost:8000");
+// 後端走「同源相對路徑」：前端只呼叫 /api/... 與 /files/...，由 Next 的 rewrites
+// 代理到 FastAPI(8000)。如此不論用 localhost、區網 IP 或 Cloudflare 臨時網址，
+// 都只需單一來源(3005)即可，瀏覽器永遠打自己這個網域，不會打錯主機或 port。
+// 若後端在別處，仍可用 NEXT_PUBLIC_API_URL 覆蓋成完整網址。
+const BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 export type FileLink = {
   url: string; // 可直接點的絕對網址
