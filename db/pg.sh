@@ -39,7 +39,7 @@ case "${1:-}" in
     else
       "$PGBIN/initdb" -D "$PGDATA" -U "$DB_USER" --auth=trust \
         --encoding=UTF8 --locale=C >/dev/null
-      echo "已建立 cluster（superuser=$DB_USER）"
+      echo "已建立 cluster（superuser=${DB_USER}）"
     fi
     "$PGBIN/pg_ctl" -D "$PGDATA" -l "$PGDATA/server.log" \
       -o "-p $PORT -k $SOCKET_DIR -c listen_addresses=localhost" -w start
