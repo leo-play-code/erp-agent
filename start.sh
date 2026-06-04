@@ -11,6 +11,10 @@
 cd "$(dirname "$0")" || exit 1
 ROOT="$(pwd)"
 
+# 後端 API port，可用環境變數覆蓋（預設 8000）。
+# 例（Mac 上 8000 被別的專案佔用時）：API_PORT=8001 bash start.sh
+API_PORT="${API_PORT:-8000}"
+
 # 偵測某 port 有沒有在 listen（跨平台:macOS 用 lsof,Linux 退回 ss）
 running() {
   if command -v lsof >/dev/null 2>&1; then
@@ -29,12 +33,12 @@ else
   if [ -d pgdata ]; then bash db/pg.sh start; else bash db/pg.sh init; fi
 fi
 
-# 2) 後端 API（8000）
-if running 8000; then
-  echo "  ✓ 後端 API 已在跑 (8000)"
+# 2) 後端 API（$API_PORT）
+if running "$API_PORT"; then
+  echo "  ✓ 後端 API 已在跑 ($API_PORT)"
 else
-  nohup venv/bin/uvicorn api.server:app --host 0.0.0.0 --port 8000 > "$ROOT/api.log" 2>&1 &
-  echo "  ✓ 後端 API 啟動中 (8000) → api.log"
+  nohup venv/bin/uvicorn api.server:app --host 0.0.0.0 --port "$API_PORT" > "$ROOT/api.log" 2>&1 &
+  echo "  ✓ 後端 API 啟動中 ($API_PORT) → api.log"
 fi
 
 # 3) 前端（3005，production build）
@@ -45,7 +49,7 @@ else
     echo "  · 第一次啟動，先 build 前端（稍等）…"
     ( cd frontend && npm run build > "$ROOT/frontend-build.log" 2>&1 )
   fi
-  ( cd frontend && nohup node_modules/.bin/next start -p 3005 > "$ROOT/frontend.log" 2>&1 & )
+  ( cd frontend && BACKEND_ORIGIN="http://127.0.0.1:$API_PORT" nohup node_modules/.bin/next start -p 3005 > "$ROOT/frontend.log" 2>&1 & )
   echo "  ✓ 前端啟動中 (3005) → frontend.log"
 fi
 
@@ -60,5 +64,5 @@ if [ -n "${RAG_WATCH_DIR:-}" ]; then
 fi
 
 echo ""
-echo "✅ 完成。前端 http://localhost:3005　｜　API http://localhost:8000"
+echo "✅ 完成。前端 http://localhost:3005　｜　API http://localhost:${API_PORT}"
 echo "   停止全部：bash stop.sh"
