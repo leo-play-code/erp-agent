@@ -76,10 +76,8 @@ export default function AdminPage() {
 
   return (
     <div className="container" style={{ padding: "56px 24px 80px", maxWidth: 820 }}>
-      <h1 style={{ fontSize: 38, fontWeight: 800, letterSpacing: "-0.02em", margin: "0 0 8px" }}>
-        知識庫後台
-      </h1>
-      <p className="muted" style={{ fontSize: 18, margin: "0 0 36px" }}>
+      <h1 className="page-title">知識庫後台</h1>
+      <p className="muted page-lead">
         設定要訓練的資料夾，或上傳檔案建立向量索引。前端的 RAG 問答會用這裡建好的知識庫作答。
       </p>
 

@@ -1284,6 +1284,18 @@ body {
   color: #c0395d;
 }
 
+/* 內頁標題（單一 Agent / 知識庫後台共用，桌機尺寸；手機在下方縮小）*/
+.page-title {
+  font-size: 38px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin: 0 0 8px;
+}
+.page-lead {
+  font-size: 18px;
+  margin: 0 0 36px;
+}
+
 /* ===== 手機 RWD ===== */
 /* 平板以下：縮窄左右留白；縮小導覽列內容（高度維持 64px，避免和對話頁固定 64px 的版面對不上）*/
 @media (max-width: 640px) {
@@ -1320,6 +1332,87 @@ body {
   }
   .hero-cta .btn {
     flex: 1 1 100%;
+  }
+
+  /* 內頁標題與前言縮小 */
+  .page-title {
+    font-size: 26px;
+  }
+  .page-lead {
+    font-size: 15px;
+    margin-bottom: 24px;
+  }
+
+  /* 單一 Agent 卡片：縮小左側圖示磚與內文字級 */
+  .card-icon {
+    width: 64px;
+    font-size: 30px;
+  }
+  .card-body {
+    padding: 10px 12px;
+  }
+  .card-body .name {
+    font-size: 15px;
+  }
+  .card-body .blurb {
+    font-size: 12.5px;
+  }
+  .card-body .needs {
+    font-size: 11.5px;
+  }
+
+  /* Modal：縮小留白與圓角，留更多內容空間 */
+  .modal-overlay {
+    padding: 14px;
+  }
+  .modal-panel {
+    padding: 22px 20px;
+    border-radius: 14px;
+  }
+  .avatar-sm {
+    width: 42px;
+    height: 42px;
+    font-size: 21px;
+  }
+
+  /* 檔案卡片：別超出視窗寬 */
+  .file-card {
+    max-width: 100%;
+  }
+
+  /* 對話泡泡與 Markdown 內文略縮 */
+  .bubble {
+    font-size: 14px;
+  }
+  .md {
+    font-size: 13.5px;
+  }
+
+  /* 知識庫後台：統計數字、區塊圖示與標題縮小 */
+  .admin-card {
+    padding: 20px 18px;
+  }
+  .admin-stat {
+    padding: 13px 14px;
+  }
+  .admin-stat .num {
+    font-size: 24px;
+  }
+  .section-icon {
+    width: 38px;
+    height: 38px;
+    font-size: 19px;
+  }
+  .section-head h3 {
+    font-size: 16px;
+  }
+  .section-head .section-desc {
+    font-size: 12.5px;
+  }
+
+  /* 範例快捷鈕字級略縮 */
+  .suggest-chip-title {
+    font-size: 13.5px;
   }
 }
 
