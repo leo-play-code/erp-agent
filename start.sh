@@ -48,7 +48,7 @@ if running "$FRONTEND_PORT"; then
 else
   if [ ! -d frontend/.next ]; then
     echo "  · 第一次啟動，先 build 前端（稍等）…"
-    ( cd frontend && npm run build > "$ROOT/frontend-build.log" 2>&1 )
+    ( cd frontend && BACKEND_ORIGIN="http://127.0.0.1:$API_PORT" npm run build > "$ROOT/frontend-build.log" 2>&1 )
   fi
   ( cd frontend && BACKEND_ORIGIN="http://127.0.0.1:$API_PORT" nohup node_modules/.bin/next start -p "$FRONTEND_PORT" > "$ROOT/frontend.log" 2>&1 & )
   echo "  ✓ 前端啟動中 ($FRONTEND_PORT) → frontend.log"
