@@ -15,7 +15,7 @@ export default function Home() {
             用單一 Agent 快速處理單一任務，或用對話讓多個 Agent 自動協作完成複雜需求 ——
             背後由 LangGraph 的 supervisor 流程統一調度。
           </p>
-          <div style={{ display: "flex", gap: 12 }}>
+          <div className="hero-cta" style={{ display: "flex", gap: 12 }}>
             <Link href="/single" className="btn btn-white btn-lg">
               使用單一 Agent
             </Link>

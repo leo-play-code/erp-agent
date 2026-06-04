@@ -20,10 +20,15 @@ SOCKET_DIR=/tmp
 DB_NAME=erp
 DB_USER=erp
 
-# 自動找到 initdb / pg_ctl / createdb（apt 裝的 postgresql 放在這裡，不在 PATH）
-PGBIN="$(ls -d /usr/lib/postgresql/*/bin 2>/dev/null | sort -V | tail -1 || true)"
+# 自動找到 initdb / pg_ctl / createdb（跨平台：Linux apt 與 macOS Homebrew 都不在 PATH）
+PGBIN="$(ls -d /usr/lib/postgresql/*/bin 2>/dev/null | sort -V | tail -1 || true)"           # Linux (apt)
+[ -z "$PGBIN" ] && PGBIN="$(ls -d /opt/homebrew/opt/postgresql@*/bin 2>/dev/null | sort -V | tail -1 || true)"  # macOS (Apple Silicon brew)
+[ -z "$PGBIN" ] && PGBIN="$(ls -d /usr/local/opt/postgresql@*/bin 2>/dev/null | sort -V | tail -1 || true)"     # macOS (Intel brew)
+[ -z "$PGBIN" ] && command -v initdb >/dev/null 2>&1 && PGBIN="$(dirname "$(command -v initdb)")"               # 已在 PATH
 if [ -z "$PGBIN" ]; then
-  echo "找不到 PostgreSQL binaries。請先安裝：sudo apt-get install -y postgresql postgresql-contrib" >&2
+  echo "找不到 PostgreSQL binaries。請先安裝：" >&2
+  echo "  Linux: sudo apt-get install -y postgresql postgresql-contrib" >&2
+  echo "  macOS: brew install postgresql@16" >&2
   exit 1
 fi
 

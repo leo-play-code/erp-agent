@@ -1283,3 +1283,49 @@ body {
   border: 1px solid #f6c9d6;
   color: #c0395d;
 }
+
+/* ===== 手機 RWD ===== */
+/* 平板以下：縮窄左右留白；縮小導覽列內容（高度維持 64px，避免和對話頁固定 64px 的版面對不上）*/
+@media (max-width: 640px) {
+  .container {
+    padding: 0 16px;
+  }
+
+  .brand {
+    font-size: 16px;
+  }
+  .nav-links {
+    gap: 2px;
+  }
+  .nav-link {
+    padding: 6px 9px;
+    font-size: 13px;
+  }
+
+  /* Hero：縮小巨型標題與上下留白；按鈕改可換行、各自佔滿一行 */
+  .hero {
+    padding: 56px 0 96px;
+    clip-path: polygon(0 0, 100% 0, 100% 92%, 0 100%);
+  }
+  .hero h1 {
+    font-size: 32px;
+    margin-bottom: 14px;
+  }
+  .hero p {
+    font-size: 16px;
+    margin-bottom: 24px;
+  }
+  .hero-cta {
+    flex-wrap: wrap;
+  }
+  .hero-cta .btn {
+    flex: 1 1 100%;
+  }
+}
+
+/* 很窄的手機：只留品牌色塊圖示，隱藏文字騰出空間給導覽連結 */
+@media (max-width: 480px) {
+  .brand-text {
+    display: none;
+  }
+}

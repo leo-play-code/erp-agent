@@ -1,7 +1,13 @@
-// 與 FastAPI 後端溝通的小工具。後端網址由 NEXT_PUBLIC_API_URL 設定，
-// 預設指向本機開發的 http://localhost:8000。
+// 與 FastAPI 後端溝通的小工具。後端網址優先用 NEXT_PUBLIC_API_URL；
+// 沒設時，自動用「使用者瀏覽器當下連到的主機名 + :8000」，這樣從別台電腦
+// 連 http://<伺服器IP>:3005 時，API 會打到同一台伺服器的 8000，而非使用者自己的 localhost。
+// （SSR 期間沒有 window，退回 localhost；實際的 fetch 都發生在瀏覽器端。）
 
-const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const BASE =
+  process.env.NEXT_PUBLIC_API_URL ||
+  (typeof window !== "undefined"
+    ? `${window.location.protocol}//${window.location.hostname}:8000`
+    : "http://localhost:8000");
 
 export type FileLink = {
   url: string; // 可直接點的絕對網址

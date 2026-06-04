@@ -26,7 +26,7 @@ fi
 if running 8000; then
   echo "  ✓ 後端 API 已在跑 (8000)"
 else
-  nohup venv/bin/uvicorn api.server:app --port 8000 > "$ROOT/api.log" 2>&1 &
+  nohup venv/bin/uvicorn api.server:app --host 0.0.0.0 --port 8000 > "$ROOT/api.log" 2>&1 &
   echo "  ✓ 後端 API 啟動中 (8000) → api.log"
 fi
 

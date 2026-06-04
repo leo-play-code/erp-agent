@@ -16,7 +16,7 @@ export default function Nav() {
       <div className="container nav-inner">
         <Link href="/" className="brand">
           <span className="brand-dot" />
-          ERP AI 助理
+          <span className="brand-text">ERP AI 助理</span>
         </Link>
         <div className="nav-links">
           {LINKS.map((l) => (
