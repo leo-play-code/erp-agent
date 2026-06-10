@@ -41,6 +41,9 @@ erp-agent/
 1. **換模型只改一處** — LLM 只在 `agents/base_agent.py` 的 `get_llm()` 建立。
    任何地方要用 LLM,一律 `from agents.base_agent import get_llm`,**不要**自己
    `ChatOpenAI(...)`。要換本地模型 / 換 provider / 改參數,只動 `get_llm()`。
+   **模型分級**(P1-7):`get_llm(tier)`——`fast`(調度/簡單,如 supervisor)、`strong`(難任務,
+   如 analyst)、`default`(其餘);各對應一個 env,沒設就回退 `OPENAI_MODEL`。難任務 agent 在
+   `build_xxx_agent` 用 `create_agent(..., tier="strong")`。
 
 2. **記憶體分兩種場景**(詳見下方「記憶體規則」) — 單獨用 Agent 帶記憶;
    接進 graph 的子 Agent **一律 `with_memory=False`**,記憶交給 graph 那層。
@@ -312,6 +315,7 @@ venv/bin/python -m agents.inventory_agent # 單獨跑某個 Agent
 ## 已知限制 / 待辦
 
 - `supervisor` 每輪都會多一次 LLM 呼叫(調度用);串接 N 個 Agent 約 N+1 次調度呼叫,屬正常成本。
+  已用 `get_llm("fast")` 走便宜/快模型壓低這筆(P1-7);設 `OPENAI_MODEL_FAST` 才有差。
 - supervisor 是回圈,理論上可能無限循環。靠提示詞(完成即 FINISH)+ LangGraph 預設
   `recursion_limit`(25)收斂;若流程很長可在 `.invoke(..., {"recursion_limit": N})` 調高。
 - 記憶後端:連得上 Postgres 時用 `PostgresSaver` 持久化(可多 replica),否則退回 RAM 的

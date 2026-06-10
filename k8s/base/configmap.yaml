@@ -14,6 +14,10 @@ data:
   USE_PRESENTON_PPT: "false"
   OPENAI_MODEL: "gpt-4o-mini"
   LLM_TEMPERATURE: "0"
+  OPENAI_MAX_RETRIES: "2"          # 撞 rate limit 自動重試（指數退避）
+  # 模型分級（選填，§25 P1-7）：不設則全用 OPENAI_MODEL。要分級就取消註解：
+  # OPENAI_MODEL_FAST: "gpt-4o-mini"     # supervisor 路由
+  # OPENAI_MODEL_STRONG: "gpt-4o"        # analyst 決策分析
   # 產物交付走物件儲存：ppt-agent 上傳、erp-api /files 串流，兩者不再共用磁碟（可跨節點）。
   # 連叢集內 MinIO 的固定入口；雲端可改指 AWS S3 端點。金鑰在 agent-secrets。
   S3_ENDPOINT_URL: "http://minio:9000"

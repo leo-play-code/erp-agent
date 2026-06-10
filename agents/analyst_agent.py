@@ -52,8 +52,11 @@ TOOLS = [describe_schema, run_sql_query, check_kpi]
 
 
 def build_analyst_agent(with_memory=True):
-    """建立決策分析 Agent。接入 LangGraph 流程時請傳 with_memory=False。"""
-    return create_agent(TOOLS, SYSTEM_PROMPT, with_memory=with_memory)
+    """建立決策分析 Agent。接入 LangGraph 流程時請傳 with_memory=False。
+
+    決策分析是「難任務」，用 strong 分級（OPENAI_MODEL_STRONG，沒設則回退預設模型）。
+    """
+    return create_agent(TOOLS, SYSTEM_PROMPT, with_memory=with_memory, tier="strong")
 
 
 # 單獨使用、自帶記憶的標準實例

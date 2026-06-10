@@ -99,7 +99,7 @@ def supervisor_node(state: ERPState):
     答案不理想時常會忍不住一直重試同一個，造成同樣的回答被輸出好幾次。這裡用程式擋住——
     若它選的 Agent 在本回合已經產出過答案，直接改成 FINISH，把控制權交還使用者。
     （ASK 等待補充資訊的重跑走 _entry_router、不經 supervisor，故不受影響。）"""
-    llm = get_llm().with_structured_output(_Route)
+    llm = get_llm("fast").with_structured_output(_Route)  # 調度用便宜/快模型（P1-7）
     decision = llm.invoke([_SUPERVISOR_PROMPT] + state["messages"])
     route = decision.next
     if route != "FINISH" and route in _done_agents(state):
