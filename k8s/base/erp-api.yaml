@@ -39,6 +39,16 @@ spec:
           image: erp-api:0.1.0
           imagePullPolicy: Never
           ports: [ { containerPort: 8000 } ]
+          # 安全硬化（白皮書 §9）：禁提權、丟掉所有 capability、套預設 seccomp。
+          # 註：此處【不】開 readOnlyRootFilesystem——erp-api 啟動與執行期會寫本地目錄
+          # （generated/uploads/sql_imports）且 Python 套件可能用快取，要開唯讀需先把這些
+          # 路徑改掛 emptyDir 並在叢集實測，屬後續（ppt-agent 走 S3 只寫 /tmp，故已先開）。
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
           envFrom:
             - configMapRef: { name: agent-config }
             - secretRef: { name: agent-secrets }
@@ -63,3 +73,25 @@ metadata:
 spec:
   selector: { app: erp-api }
   ports: [ { port: 8000, targetPort: 8000 } ]
+---
+# 自動擴縮（白皮書 §25 P1-1）。P0-1 把記憶搬進 Postgres 後 erp-api 變無狀態，任何 replica
+# 都能接任何請求，才敢開 HPA。CPU+記憶體雙指標：負載/併發上來時自動加 replica、回落時縮回。
+# 註：erp-api 多為等 LLM 的 I/O，CPU 不一定反映真實壓力；要「依在途請求數」精準擴縮需 request
+# 指標管線（Prometheus + KEDA），屬後續。此 HPA 是無外部依賴、可立即生效的保守基線。
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: erp-api
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: erp-api }
+  minReplicas: 1
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 65 }
+    - type: Resource
+      resource:
+        name: memory
+        target: { type: Utilization, averageUtilization: 75 }
