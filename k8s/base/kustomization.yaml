@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# 所有資源都進 agents namespace
+namespace: agents
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  # secret 不入 kustomize：避免 apply -k 把真金鑰蓋回 REPLACE_ME。
+  # 改由 runbook 用 kubectl create secret 手動建（見 k8s/README.md）。
+  - outputs-pvc.yaml
+  - postgres.yaml
+  - ppt-agent.yaml
+  - erp-api.yaml
+  - frontend.yaml
+  - ingress.yaml
+  - seed-job.yaml
+
+# 影像 tag 集中管理（換版本只改這裡）
+images:
+  - name: erp-api
+    newTag: "0.1.0"
+  - name: erp-frontend
+    newTag: "0.1.0"
+  - name: ppt-agent
+    newTag: "0.1.0"

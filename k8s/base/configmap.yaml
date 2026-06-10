@@ -1,0 +1,13 @@
+# 非機密設定（單一事實來源；機密在 secret）。env 注入各容器。
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-config
+data:
+  # erp-api 連叢集內的固定入口（Service 名，不是 localhost）
+  DATABASE_URL: "postgresql://erp@postgres:5432/erp"
+  PPT_AGENT_TRANSPORT: "sse"
+  PPT_AGENT_URL: "http://ppt-agent:8000/sse"   # ← Service 名固定入口；Pod 擴縮 erp-api 不用改
+  USE_PRESENTON_PPT: "false"
+  OPENAI_MODEL: "gpt-4o-mini"
+  LLM_TEMPERATURE: "0"

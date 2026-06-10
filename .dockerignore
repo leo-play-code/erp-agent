@@ -1,0 +1,17 @@
+# 不進 api image 的東西（縮小 build context、避免烤進執行期/機密資料）
+.git/
+venv/
+pgdata/
+frontend/
+node_modules/
+generated/
+uploads/
+rag_index/
+sql_imports/
+samples/
+k8s/
+__pycache__/
+*.pyc
+*.log
+.env
+.playwright-mcp/

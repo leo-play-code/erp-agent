@@ -1,0 +1,29 @@
+# 一次性灌示範資料（HR 4 表 + 製造 14 表）。等 postgres 就緒後跑 db.seed / db.seed_mfg。
+# 重跑：kubectl -n agents delete job db-seed 後重新 apply（seed 用固定亂數種子、可重跑）。
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-seed
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: seed
+          image: erp-api:0.1.0
+          imagePullPolicy: Never
+          envFrom:
+            - configMapRef: { name: agent-config }
+          command: ["sh", "-c"]
+          args:
+            - |
+              python -c "
+              import socket, time
+              while True:
+                  try:
+                      socket.create_connection(('postgres', 5432), 2); break
+                  except OSError:
+                      print('waiting postgres'); time.sleep(2)
+              "
+              python -m db.seed && python -m db.seed_mfg

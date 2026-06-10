@@ -196,6 +196,32 @@ grep -rnE "^\s*(import|from)\s+(langchain|langgraph|mcp|fastapi|fastmcp)" ../age
 
 ---
 
+## 部署與通訊鐵則(容器 / k3s)
+
+容器化編排的鐵則(完整 manifest 在 `k8s/`,runbook 見 `k8s/README.md`):
+
+1. **容器邊界＝行程邊界**:跨容器只能走網路(URL),**不可 Python import**。同一行程內的
+   in-process agent(本地 `@tool`)才走函式呼叫。
+2. **連「Service 名固定入口」,不是 `localhost`、不是某個 replica 的 IP**:
+   `PPT_AGENT_URL=http://ppt-agent:8000/sse`、DB `postgres:5432`。replica 由 Service/HPA 動態
+   進出,erp-agent **永遠不改 URL**。內網埠用 Service 暴露即可,要 scale 就別 publish 到主機。
+3. **兩層分開**:**調動**(supervisor 決定派誰)在 graph 內、記憶體、無 HTTP;**執行**才可能對外——
+   in-process agent=函式呼叫,外部化 agent(MCP-backed)=MCP/HTTP 到該服務。LLM 呼叫是另一條 HTTPS。
+4. **外部化 agent 必須常駐 up**:連線是「連到正在跑的服務」;它沒起來,`load_*_tools()` 會優雅
+   回空清單(erp 仍能起,但該 agent 暫無工具)。**in-process agent 不另跑容器**,隨 host 一起跑。
+5. **每容器 `requests`+`limits` + readiness/liveness 必設**(對應 `agent.yaml`,§16)。MCP-SSE 無
+   HTTP 健康端點 → 用 `tcpSocket` 探針;REST adapter 有 `/healthz` 可 `httpGet`。
+6. **秘密放 Secret、設定放 ConfigMap**,env 注入,**勿烤進 image**(`.env`、金鑰都在 `.dockerignore`)。
+7. **產物交付**:ppt-agent 寫 `OUTPUTS_DIR`、erp-api 的 `/files` 讀同一處 → 單機共用一個 PVC
+   (local-path,RWO 同節點);**多節點/雲端**改 RWX(NFS/EFS)或改 MinIO 物件儲存(白皮書 §21.4)。
+8. **單機用 k3s**(完整 k8s、輕量);manifest 一開始就寫成可轉雲端,轉換只改 overlay 的幾格
+   (StorageClass / ingressClassName / SC),`base/` 的 Deployment/Service/HPA 不動。
+
+> 現況:本機仍可用 `start.sh`(原生)開發;k3s 是另一條部署路徑(`k8s/`),兩者不衝突。
+> 新增可攜式 agent 時,在 `k8s/base/` 比照 ppt-agent 加 Deployment+Service(+HPA),erp 連其 Service 名。
+
+---
+
 ## Tool 撰寫規範
 
 - 一律用 `@tool` 裝飾器(from `langchain_core.tools`)。
