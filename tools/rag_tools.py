@@ -10,6 +10,7 @@
   融合，再加多重查詢改寫與 LLM 重排，盡量讓確實在庫裡的資料不被漏掉（見該函式上方說明）。
 """
 
+import functools
 import hashlib
 import json
 import math
@@ -30,6 +31,30 @@ INDEX_DIR = Path(__file__).resolve().parent.parent / "rag_index"
 INDEX_FILE = INDEX_DIR / "index.json"
 EMBED_MODEL = "text-embedding-3-small"
 
+# 索引持久化（白皮書 §25：RAG 索引也是「狀態」，多 replica/跨節點要共用才不會擴展就掉資料）。
+# 設了 S3_ENDPOINT_URL+S3_BUCKET → 索引存物件儲存（MinIO/S3）的 rag/index.json，所有 replica
+# 任何節點都讀同一份；沒設 → 退回本地 rag_index/index.json（單機開發）。
+# 用 etag 記憶體快取：每次只做輕量 head 檢查，內容沒變就用記憶體、不重抓整包；變了才下載。
+_S3_INDEX_KEY = "rag/index.json"
+_idx_cache: dict = {"etag": None, "items": None}
+
+
+def _s3_enabled() -> bool:
+    return bool(os.getenv("S3_ENDPOINT_URL") and os.getenv("S3_BUCKET"))
+
+
+@functools.lru_cache(maxsize=1)
+def _s3():
+    import boto3
+
+    return boto3.client(
+        "s3",
+        endpoint_url=os.getenv("S3_ENDPOINT_URL"),
+        aws_access_key_id=os.getenv("S3_ACCESS_KEY"),
+        aws_secret_access_key=os.getenv("S3_SECRET_KEY"),
+        region_name=os.getenv("S3_REGION", "us-east-1"),
+    )
+
 
 # ── 索引存取 ───────────────────────────────────────────────────────────
 def _embeddings():
@@ -37,12 +62,37 @@ def _embeddings():
 
 
 def _load() -> list[dict]:
+    if _s3_enabled():
+        from botocore.exceptions import ClientError
+
+        bucket = os.getenv("S3_BUCKET")
+        try:
+            etag = _s3().head_object(Bucket=bucket, Key=_S3_INDEX_KEY)["ETag"]
+            if _idx_cache["etag"] == etag and _idx_cache["items"] is not None:
+                return _idx_cache["items"]  # 沒變：用記憶體快取，不重抓
+            obj = _s3().get_object(Bucket=bucket, Key=_S3_INDEX_KEY)
+            items = json.loads(obj["Body"].read().decode("utf-8")).get("items", [])
+            _idx_cache["etag"], _idx_cache["items"] = etag, items
+            return items
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "")
+            if code in ("404", "NoSuchKey", "NotFound"):
+                return []  # 還沒建過索引
+            return _idx_cache["items"] or []  # 連線等問題：退回快取/空，別讓查詢炸掉
     if INDEX_FILE.exists():
         return json.loads(INDEX_FILE.read_text("utf-8")).get("items", [])
     return []
 
 
 def _save(items: list[dict]) -> None:
+    if _s3_enabled():
+        bucket = os.getenv("S3_BUCKET")
+        body = json.dumps({"items": items}, ensure_ascii=False).encode("utf-8")
+        resp = _s3().put_object(
+            Bucket=bucket, Key=_S3_INDEX_KEY, Body=body, ContentType="application/json"
+        )
+        _idx_cache["etag"], _idx_cache["items"] = resp.get("ETag"), items
+        return
     INDEX_DIR.mkdir(exist_ok=True)
     INDEX_FILE.write_text(json.dumps({"items": items}, ensure_ascii=False), "utf-8")
 
