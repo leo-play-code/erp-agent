@@ -18,11 +18,21 @@ from tools._semantic_index import build_or_load, rank
 
 _DIR = Path(__file__).resolve().parent.parent / "sql_library"
 SCHEMA_FILE = _DIR / "schema.json"
+SCHEMA_IMPORTS_FILE = _DIR / "schema_imports.json"  # 使用者上傳 Excel 自動匯入的表(見 excel_import.py)
 SCHEMA_INDEX = _DIR / "schema_index.json"
 
 
 def _load() -> dict:
-    return json.loads(SCHEMA_FILE.read_text("utf-8"))
+    """讀取 schema:人工策展的 schema.json + 使用者 Excel 匯入的 schema_imports.json(若有)。
+
+    兩個檔分開維護(策展的保持乾淨、匯入的自動寫入),這裡合併成單一 tables 清單供檢索/渲染。
+    匯入表每次都重新讀檔,所以後台一匯入,find_tables 下次查就會吃到(索引依內容雜湊自動重建)。
+    """
+    data = json.loads(SCHEMA_FILE.read_text("utf-8"))
+    if SCHEMA_IMPORTS_FILE.exists():
+        imported = json.loads(SCHEMA_IMPORTS_FILE.read_text("utf-8")).get("tables", [])
+        data["tables"] = data["tables"] + imported
+    return data
 
 
 def full_schema_text() -> str:

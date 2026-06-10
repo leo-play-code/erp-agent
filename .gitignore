@@ -18,6 +18,10 @@ rag_index/
 # RAG 上傳的原始檔
 uploads/
 
+# 數據型 Excel 匯入：使用者上傳的原檔 + 自動產生的 schema 登記(執行期資料，非程式)
+sql_imports/
+sql_library/schema_imports.json
+
 # Python 快取
 __pycache__/
 *.py[cod]

@@ -22,6 +22,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from graph.erp_graph import ASK_MARKER, erp_graph
 from graph.registry import AGENTS
+from tools.excel_import import import_excel
 from tools.ppt_tools import template_cards
 from tools.rag_tools import ingest_file, kb_summary, sync_folder
 
@@ -42,6 +43,18 @@ _GENERATED.mkdir(exist_ok=True)
 # 上傳到知識庫（RAG）的原始檔放這裡永久保存，透過 /api/rag/file/<檔名> 提供下載／追溯
 _UPLOADS = Path(__file__).resolve().parent.parent / "uploads"
 _UPLOADS.mkdir(exist_ok=True)
+
+# 知識庫 vault（Obsidian）：wiki/ 正式知識（RAG 只索引這層）、raw/ 原始證據、.drafts/ 待審草稿。
+# 路徑可用環境變數 ERP_VAULT 覆蓋（預設指向 Windows 桌面的 vault，WSL 經 /mnt/c 讀取）。
+_VAULT = Path(os.getenv("ERP_VAULT", "/mnt/c/Users/Administrator/Desktop/erp-kb"))
+
+
+def _vault_md(folder: Path, name: str) -> Path:
+    """把使用者給的檔名轉成 vault 內安全的 .md 路徑（擋目錄穿越、限定 .md）。"""
+    safe = Path(name).name
+    if not safe.endswith(".md"):
+        raise HTTPException(status_code=400, detail="檔名須為 .md")
+    return folder / safe
 
 
 @app.get("/files/{name}")
@@ -261,3 +274,111 @@ def get_rag_file(name: str):
     if not path.is_file():
         raise HTTPException(status_code=404, detail="原始檔不存在（可能是貼上內容或資料夾同步來源）。")
     return FileResponse(str(path), filename=safe)
+
+
+# ── 後台：知識庫 vault 流程（上傳 → AI 編譯草稿 → 審核 → 發布）──────────────
+# 讓使用者完全在前端完成「加資料」：上傳檔進 raw/、LLM 自動拆成原子筆記草稿進 .drafts/，
+# 前端審核（可編輯）後發布到 wiki/ 並重新索引。RAG 只索引 wiki/，草稿不會汙染問答。
+
+
+@app.post("/api/wiki/upload")
+async def wiki_upload(file: UploadFile = File(...)):
+    """上傳文件到 vault/raw/，用 LLM 自動編譯成原子筆記草稿（進 .drafts/ 待審）。"""
+    from compile_wiki import compile_file_to_drafts  # 延遲匯入，避免影響伺服器啟動
+
+    raw = _VAULT / "raw"
+    raw.mkdir(parents=True, exist_ok=True)
+    safe = Path(file.filename or "upload").name  # 擋目錄穿越
+    (raw / safe).write_bytes(file.file.read())
+    drafts = compile_file_to_drafts(str(raw / safe), str(_VAULT))
+    return {"drafts": drafts,
+            "text": f"已上傳「{safe}」並產生 {len(drafts)} 篇草稿，請於下方審核後發布。"}
+
+
+@app.post("/api/wiki/compile-folder")
+async def wiki_compile_folder(folder_path: str = Form(...)):
+    """指定資料夾，把裡面所有文件都用 LLM 編譯成原子筆記草稿（進 .drafts/ 待審）。
+
+    與 /api/rag/sync（直接索引原始檔、不整理）不同：這條會 AI 整理成筆記、需審核後才發布。
+    檔多會花較久（每檔一次 LLM）。
+    """
+    from compile_wiki import compile_folder_to_drafts  # 延遲匯入
+
+    base = Path(folder_path).expanduser()
+    if not base.is_dir():
+        raise HTTPException(status_code=400, detail=f"找不到資料夾「{folder_path}」，請確認路徑存在於後端機器上。")
+    r = compile_folder_to_drafts(folder_path, str(_VAULT))
+    return {**r, "text": f"已掃描 {r['files']} 個檔，產生 {r['drafts']} 篇草稿，請於下方審核後發布。"}
+
+
+@app.get("/api/wiki/drafts")
+def wiki_list_drafts():
+    """列出 .drafts/ 內所有草稿（檔名 + 內容），供前端審核。"""
+    d = _VAULT / ".drafts"
+    if not d.is_dir():
+        return []
+    return [{"name": p.name, "content": p.read_text("utf-8")} for p in sorted(d.glob("*.md"))]
+
+
+@app.post("/api/wiki/draft/delete")
+async def wiki_draft_delete(name: str = Form(...)):
+    """刪除某篇草稿（審核後不要的）。"""
+    p = _vault_md(_VAULT / ".drafts", name)
+    if p.is_file():
+        p.unlink()
+    return {"text": f"已刪除草稿「{p.name}」。"}
+
+
+@app.post("/api/wiki/publish")
+async def wiki_publish(name: str = Form(...), content: str = Form(...)):
+    """把（可能編輯過的）草稿內容寫入 wiki/、刪掉草稿，並重新索引 wiki/。"""
+    src = _vault_md(_VAULT / ".drafts", name)
+    wiki = _VAULT / "wiki"
+    wiki.mkdir(parents=True, exist_ok=True)
+    dst = _vault_md(wiki, name)
+    dst.write_text(content, "utf-8")
+    if src.is_file():
+        src.unlink()
+    msg = sync_folder.invoke({"folder_path": str(wiki)})
+    return {"text": f"已發布「{dst.name}」到知識庫並重新索引。{msg}"}
+
+
+@app.post("/api/wiki/publish-all")
+async def wiki_publish_all(payload: str = Form(...)):
+    """一次發布多篇草稿（payload 為 [{"name","content"},...] 的 JSON）：全部寫進 wiki/、
+    刪掉對應草稿，最後只重新索引一次（比逐篇發布快）。"""
+    items = json.loads(payload)
+    wiki = _VAULT / "wiki"
+    wiki.mkdir(parents=True, exist_ok=True)
+    drafts = _VAULT / ".drafts"
+    for it in items:
+        dst = _vault_md(wiki, it["name"])
+        dst.write_text(it["content"], "utf-8")
+        src = _vault_md(drafts, it["name"])
+        if src.is_file():
+            src.unlink()
+    msg = sync_folder.invoke({"folder_path": str(wiki)})
+    return {"count": len(items), "text": f"已發布 {len(items)} 篇到知識庫並重新索引。{msg}"}
+
+
+# ── 後台：數據型 Excel 匯入資料庫（供 sql agent 精確查詢）──────────────────
+# 與 RAG（語意問答）分工：規章/說明型文件走 /api/rag/upload；這裡處理「要算數/排序/
+# 篩選」的數據型 Excel——每個分頁建成一張表灌進 PostgreSQL，並登記給 sql agent 查詢。
+
+_SQL_IMPORTS = Path(__file__).resolve().parent.parent / "sql_imports"
+_SQL_IMPORTS.mkdir(exist_ok=True)
+
+
+@app.post("/api/sql/import-excel")
+async def sql_import_excel(file: UploadFile = File(...)):
+    """上傳一個數據型 Excel（.xlsx/.xls），每個分頁匯入成一張資料表供 sql agent 查詢。
+
+    原檔保存在 sql_imports/（同名覆蓋），供日後重匯/追溯。
+    """
+    safe = Path(file.filename or "upload.xlsx").name  # 擋目錄穿越
+    if not safe.lower().endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="只接受 Excel 檔（.xlsx / .xls）。")
+    path = _SQL_IMPORTS / safe
+    with open(path, "wb") as f:
+        f.write(file.file.read())
+    return {"text": import_excel(str(path), source_name=safe)}

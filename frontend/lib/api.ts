@@ -120,6 +120,66 @@ export async function ragUpload(file: File): Promise<string> {
   return (await res.json()).text;
 }
 
+// ── 知識庫 vault 流程：上傳 → AI 編譯草稿 → 審核 → 發布 ────────────────
+export type WikiDraft = { name: string; content: string };
+
+// 上傳檔案 → 後端存進 raw/ 並用 LLM 編譯成原子筆記草稿（進 .drafts/），回傳產生的草稿檔名。
+export async function wikiUpload(
+  file: File
+): Promise<{ drafts: string[]; text: string }> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${BASE}/api/wiki/upload`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await errText(res, "上傳/編譯失敗"));
+  return res.json();
+}
+
+// 指定資料夾 → 把裡面所有文件批次 AI 編譯成草稿（進 .drafts/ 待審）。
+export async function wikiCompileFolder(
+  folderPath: string
+): Promise<{ files: number; drafts: number; text: string }> {
+  const form = new FormData();
+  form.append("folder_path", folderPath);
+  const res = await fetch(`${BASE}/api/wiki/compile-folder`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await errText(res, "資料夾編譯失敗"));
+  return res.json();
+}
+
+// 取得目前所有待審草稿（檔名 + 內容）。
+export async function wikiDrafts(): Promise<WikiDraft[]> {
+  const res = await fetch(`${BASE}/api/wiki/drafts`);
+  if (!res.ok) throw new Error("無法取得草稿清單");
+  return res.json();
+}
+
+// 刪除一篇草稿。
+export async function wikiDeleteDraft(name: string): Promise<string> {
+  const form = new FormData();
+  form.append("name", name);
+  const res = await fetch(`${BASE}/api/wiki/draft/delete`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await errText(res, "刪除草稿失敗"));
+  return (await res.json()).text;
+}
+
+// 發布草稿（帶最後編輯內容）到 wiki/ 並重新索引。
+export async function wikiPublish(name: string, content: string): Promise<string> {
+  const form = new FormData();
+  form.append("name", name);
+  form.append("content", content);
+  const res = await fetch(`${BASE}/api/wiki/publish`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await errText(res, "發布失敗"));
+  return (await res.json()).text;
+}
+
+// 一次發布多篇草稿（帶各自當前內容），後端寫入 wiki/ 後只重新索引一次。
+export async function wikiPublishAll(items: WikiDraft[]): Promise<string> {
+  const form = new FormData();
+  form.append("payload", JSON.stringify(items));
+  const res = await fetch(`${BASE}/api/wiki/publish-all`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await errText(res, "全部發布失敗"));
+  return (await res.json()).text;
+}
+
 // 串流事件：supervisor 派 Agent(status)、某 Agent 的產出(message)、結束(done)、錯誤(error)
 export type ChatStreamEvent =
   | { type: "status"; agent: string }

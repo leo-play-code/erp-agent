@@ -6,7 +6,8 @@ langgraph==1.2.2             # Agent 與後續流程編排
 langchain-mcp-adapters==0.3.0  # 經 MCP 接可攜式 agent（ppt-agent）的工具
 
 # 工具相依
-pypdf==6.12.2               # PDF 讀取轉文字
+pypdf==6.12.2               # PDF 讀取轉文字（markitdown 轉換失敗時的後援）
+markitdown[pdf,docx,pptx,xlsx,xls]==0.1.6  # RAG 讀檔：Excel/Word/PPT/CSV/PDF… 統一轉 Markdown 供建索引
 python-pptx==1.0.2          # 簡報（.pptx）產出
 psycopg[binary]==3.3.4      # PostgreSQL 驅動（sql agent 查詢人事資料）
 

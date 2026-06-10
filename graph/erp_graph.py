@@ -15,7 +15,7 @@
 
 from typing import Literal
 
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
 from pydantic import BaseModel, Field, create_model
@@ -61,6 +61,10 @@ _SUPERVISOR_PROMPT = SystemMessage(
         "一步步完成它：\n"
         f"{_ROUTE_HINT}\n\n"
         "規則：\n"
+        "0. 區分『查資料』與『問制度』：問**具體數字/某人某筆紀錄**（某員工特休剩幾天、"
+        "某月營收）才派 `sql`；問**規定/政策/制度**（新進員工依規定該有幾天特休、請假規則、"
+        "加班辦法 這類『該怎麼算/有什麼規定』）優先派給 `rag` 去查公司文件，不要丟給 `sql`"
+        "（資料庫存的是實際紀錄、不是規章，丟給 sql 只會查不到）。\n"
         "1. 每次只指派一個 Agent，挑最適合處理使用者「當前需求」的那一個。\n"
         "2. 已完成的步驟，其輸出會以該 Agent 的名稱標記在訊息中，據此判斷進度。\n"
         "3. 當某個 Agent『向使用者提問或請求補充資訊』（例如請使用者選擇簡報風格代號）時：\n"
@@ -77,11 +81,31 @@ _SUPERVISOR_PROMPT = SystemMessage(
 )
 
 
+def _done_agents(state: ERPState):
+    """本回合（最後一則使用者訊息之後）已產出過答案的 Agent 名稱集合。"""
+    done = set()
+    for m in reversed(state["messages"]):
+        if isinstance(m, HumanMessage):  # 回溯到本回合起點即停
+            break
+        name = getattr(m, "name", None)
+        if name:
+            done.add(name)
+    return done
+
+
 def supervisor_node(state: ERPState):
-    """看完整對話進度，決定下一步交給哪個 Agent，或 FINISH 結束。"""
+    """看完整對話進度，決定下一步交給哪個 Agent，或 FINISH 結束。
+
+    外加「硬性防重派」：supervisor 的提示詞要求它別重派已產出答案的 Agent，但 LLM 在
+    答案不理想時常會忍不住一直重試同一個，造成同樣的回答被輸出好幾次。這裡用程式擋住——
+    若它選的 Agent 在本回合已經產出過答案，直接改成 FINISH，把控制權交還使用者。
+    （ASK 等待補充資訊的重跑走 _entry_router、不經 supervisor，故不受影響。）"""
     llm = get_llm().with_structured_output(_Route)
     decision = llm.invoke([_SUPERVISOR_PROMPT] + state["messages"])
-    return {"route": decision.next}
+    route = decision.next
+    if route != "FINISH" and route in _done_agents(state):
+        route = "FINISH"
+    return {"route": route}
 
 
 def _make_node(name, agent):
