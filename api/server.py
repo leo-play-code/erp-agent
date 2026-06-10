@@ -10,6 +10,7 @@
     POST /api/chat/stream  同上，但邊跑邊串流：每派一個 Agent、每段產出即時回傳（對話頁）
 """
 
+import functools
 import json
 import os
 import tempfile
@@ -40,6 +41,28 @@ app.add_middleware(
 _GENERATED = Path(__file__).resolve().parent.parent / "generated"
 _GENERATED.mkdir(exist_ok=True)
 
+
+# 產物交付兩種模式（與 ppt-agent/adapters/storage.py 對稱）：
+# - 設了 S3_ENDPOINT_URL+S3_BUCKET → /files 從物件儲存（MinIO/S3）串流。ppt-agent 上傳、
+#   erp-api 下載，兩者改共用 bucket、不再共用磁碟 → 可跨節點（白皮書 §25 P0-2）。
+# - 沒設 → 維持讀本地 generated/（單機/同節點，共享 PVC）。
+def _s3_enabled() -> bool:
+    return bool(os.getenv("S3_ENDPOINT_URL") and os.getenv("S3_BUCKET"))
+
+
+@functools.lru_cache(maxsize=1)
+def _s3_client():
+    """S3 client（boto3，相容 MinIO 與 AWS S3）。只在 S3 模式才會被呼叫。"""
+    import boto3
+
+    return boto3.client(
+        "s3",
+        endpoint_url=os.getenv("S3_ENDPOINT_URL"),
+        aws_access_key_id=os.getenv("S3_ACCESS_KEY"),
+        aws_secret_access_key=os.getenv("S3_SECRET_KEY"),
+        region_name=os.getenv("S3_REGION", "us-east-1"),
+    )
+
 # 上傳到知識庫（RAG）的原始檔放這裡永久保存，透過 /api/rag/file/<檔名> 提供下載／追溯
 _UPLOADS = Path(__file__).resolve().parent.parent / "uploads"
 _UPLOADS.mkdir(exist_ok=True)
@@ -59,17 +82,31 @@ def _vault_md(folder: Path, name: str) -> Path:
 
 @app.get("/files/{name}")
 def get_file(name: str):
-    """提供 generated/ 內的檔案。
+    """提供產物下載（物件儲存或本地 generated/，由 S3 env 決定，見上方註解）。
 
     .pptx 等檔案一律帶 Content-Disposition: attachment **強制下載** —— 因為前端在
     另一個 port，瀏覽器會忽略 <a download> 的跨來源下載，必須靠這個標頭才會真的下載
     （否則點了只會在分頁開啟）。.html（如預覽頁）則用 inline 直接在瀏覽器開。
     """
     safe = Path(name).name  # 擋目錄穿越
+    is_html = safe.lower().endswith((".html", ".htm"))
+
+    if _s3_enabled():
+        from botocore.exceptions import ClientError
+
+        try:
+            obj = _s3_client().get_object(Bucket=os.getenv("S3_BUCKET"), Key=safe)
+        except ClientError:
+            raise HTTPException(status_code=404, detail="檔案不存在")
+        headers = None if is_html else {"Content-Disposition": f'attachment; filename="{safe}"'}
+        media = obj.get("ContentType") or "application/octet-stream"
+        return StreamingResponse(obj["Body"].iter_chunks(), media_type=media, headers=headers)
+
+    # 共享磁碟模式（本機/同節點）
     path = _GENERATED / safe
     if not path.is_file():
         raise HTTPException(status_code=404, detail="檔案不存在")
-    if safe.lower().endswith((".html", ".htm")):
+    if is_html:
         return FileResponse(str(path))  # 預覽頁：inline 開啟
     return FileResponse(str(path), filename=safe)  # 其餘：強制下載
 

@@ -16,7 +16,7 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
-        fsGroup: 1000             # /files 讀的 outputs PVC（ppt-agent 寫進去）
+        fsGroup: 1000
       # 等 DB 與 ppt-agent 就緒再啟動：api 啟動時會 import graph→建 ppt agent→
       # 經 sse 載入 ppt-agent 工具，故 ppt-agent 必須先 up，工具才載得到。
       initContainers:
@@ -53,11 +53,8 @@ spec:
             tcpSocket: { port: 8000 }
             initialDelaySeconds: 20
             periodSeconds: 20
-          volumeMounts:
-            - { name: outputs, mountPath: /app/generated }
-      volumes:
-        - name: outputs
-          persistentVolumeClaim: { claimName: outputs-pvc }
+          # 產物交付改走物件儲存：/files 從 MinIO（S3_*）串流，不再掛共享 PVC，
+          # 故 erp-api 與 ppt-agent 可分散到不同節點（白皮書 §25 P0-2）。
 ---
 apiVersion: v1
 kind: Service

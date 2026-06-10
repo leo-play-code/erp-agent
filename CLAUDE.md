@@ -176,8 +176,10 @@ erp-agent 的套件裡(放進去再 import = 把想拆掉的耦合裝回去)。�
 2. `agents/ppt_agent.py` 的 `TOOLS` 來源改成 `load_ppt_tools()`;提示詞/`with_memory=False` 照舊。
 3. `graph/registry.py` 那筆**不用動**(build 函數內部換 tools 即可)。
 
-**產物交付契約**:可攜式 agent 寫檔到 `OUTPUTS_DIR`(uuid 檔名),工具回傳 `/files/<uuid>.pptx`;
-讓它和 api 指到**同一個產出目錄**(本機 = `./generated`;容器 = bind-mount/volume),`/files` 即可下載。
+**產物交付契約**:可攜式 agent 產出 uuid 檔名,工具回傳 `/files/<uuid>.pptx`(契約固定,前端不變)。
+實際存哪由其 adapter 決定:設了 `S3_*` 就上傳物件儲存(ppt-agent 與 api 共用同一 bucket,可跨節點);
+沒設則寫共享 `OUTPUTS_DIR`(本機 = `./generated`,api 讀同處)。新增會產檔的可攜式 agent 比照
+`ppt-agent/adapters/storage.py`(S3-or-local 二選一,core 不碰 I/O)。
 
 **回滾**:`USE_PRESENTON_PPT=true` 切回舊的 Presenton 路徑(`tools/ppt_tools.py`,保留未刪)。
 
@@ -215,8 +217,11 @@ grep -rnE "^\s*(import|from)\s+(langchain|langgraph|mcp|fastapi|fastmcp)" ../age
 5. **每容器 `requests`+`limits` + readiness/liveness 必設**(對應 `agent.yaml`,§16)。MCP-SSE 無
    HTTP 健康端點 → 用 `tcpSocket` 探針;REST adapter 有 `/healthz` 可 `httpGet`。
 6. **秘密放 Secret、設定放 ConfigMap**,env 注入,**勿烤進 image**(`.env`、金鑰都在 `.dockerignore`)。
-7. **產物交付**:ppt-agent 寫 `OUTPUTS_DIR`、erp-api 的 `/files` 讀同一處 → 單機共用一個 PVC
-   (local-path,RWO 同節點);**多節點/雲端**改 RWX(NFS/EFS)或改 MinIO 物件儲存(白皮書 §21.4)。
+7. **產物交付走物件儲存(MinIO/S3)**:設了 `S3_ENDPOINT_URL`+`S3_BUCKET` → ppt-agent 上傳
+   bucket、erp-api 的 `/files` 從同一 bucket **串流**下載,兩者改用網路存取、**不再共用磁碟**,
+   所以 Pod 可跨節點(取代舊的 `outputs-pvc` RWO 同節點限制;白皮書 §25 P0-2)。沒設 S3 則優雅
+   退回讀本地 `generated/`(單機開發)。k8s 內建 `minio.yaml`(PVC 只掛 MinIO 自己);雲端把
+   `S3_ENDPOINT_URL` 指向 AWS S3、移除 `minio.yaml` 即可,程式不動。前端 `/files/...` 契約不變。
 8. **單機用 k3s**(完整 k8s、輕量);manifest 一開始就寫成可轉雲端,轉換只改 overlay 的幾格
    (StorageClass / ingressClassName / SC),`base/` 的 Deployment/Service/HPA 不動。
 

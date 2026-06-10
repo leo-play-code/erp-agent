@@ -14,3 +14,7 @@ data:
   USE_PRESENTON_PPT: "false"
   OPENAI_MODEL: "gpt-4o-mini"
   LLM_TEMPERATURE: "0"
+  # 產物交付走物件儲存：ppt-agent 上傳、erp-api /files 串流，兩者不再共用磁碟（可跨節點）。
+  # 連叢集內 MinIO 的固定入口；雲端可改指 AWS S3 端點。金鑰在 agent-secrets。
+  S3_ENDPOINT_URL: "http://minio:9000"
+  S3_BUCKET: "erp-outputs"
