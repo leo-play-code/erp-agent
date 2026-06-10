@@ -348,23 +348,40 @@ async def rag_sync(folder_path: str = Form(...)):
     return {"text": sync_folder.invoke({"folder_path": folder_path})}
 
 
+# RAG 原始檔在物件儲存的前綴（與索引同 bucket，跨 replica/節點共用，見 rag_tools）。
+_S3_UPLOAD_PREFIX = "uploads/"
+
+
 @app.post("/api/rag/upload")
 async def rag_upload(file: UploadFile = File(...)):
     """上傳一個檔案加入知識庫（建索引）。以原檔名作為來源標籤。
 
-    原檔永久保存在 uploads/（同名覆蓋），既當索引「來源」標籤，也供日後重嵌／下載／追溯。
+    原檔保存供日後重嵌／下載／追溯：S3 模式存物件儲存（跨 replica 共用），否則存本地 uploads/。
     """
     safe = Path(file.filename or "upload").name  # 擋目錄穿越
-    path = _UPLOADS / safe
+    data = file.file.read()
+    path = _UPLOADS / safe  # 先寫本地：ingest 要讀實體檔做嵌入
     with open(path, "wb") as f:
-        f.write(file.file.read())
-    return {"text": ingest_file.invoke({"file_path": str(path)})}
+        f.write(data)
+    result = ingest_file.invoke({"file_path": str(path)})
+    if _s3_enabled():  # 再上傳物件儲存，讓任何 replica 都下載得到（取代依賴本地磁碟）
+        _s3_client().put_object(Bucket=os.getenv("S3_BUCKET"), Key=_S3_UPLOAD_PREFIX + safe, Body=data)
+    return {"text": result}
 
 
 @app.get("/api/rag/file/{name}")
 def get_rag_file(name: str):
-    """下載知識庫某個來源的原始檔（從 uploads/ 提供）。"""
+    """下載知識庫某個來源的原始檔（S3 模式從物件儲存，否則本地 uploads/）。"""
     safe = Path(name).name  # 擋目錄穿越
+    if _s3_enabled():
+        from botocore.exceptions import ClientError
+
+        try:
+            obj = _s3_client().get_object(Bucket=os.getenv("S3_BUCKET"), Key=_S3_UPLOAD_PREFIX + safe)
+        except ClientError:
+            raise HTTPException(status_code=404, detail="原始檔不存在（可能是貼上內容或資料夾同步來源）。")
+        headers = {"Content-Disposition": f'attachment; filename="{safe}"'}
+        return StreamingResponse(obj["Body"].iter_chunks(), media_type="application/octet-stream", headers=headers)
     path = _UPLOADS / safe
     if not path.is_file():
         raise HTTPException(status_code=404, detail="原始檔不存在（可能是貼上內容或資料夾同步來源）。")
