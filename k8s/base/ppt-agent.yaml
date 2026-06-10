@@ -1,0 +1,69 @@
+# ppt-agent —— 外部化的可攜式簡報服務（image 由 ../agents/ppt-agent 建）。
+# erp-api 經 Service 名 http://ppt-agent:8000/sse 連它（固定入口）。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ppt-agent
+  labels: { app: ppt-agent }
+spec:
+  replicas: 1                      # min=1 常駐；尖峰由 HPA 擴到 max
+  selector:
+    matchLabels: { app: ppt-agent }
+  template:
+    metadata:
+      labels: { app: ppt-agent }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000              # 讓掛進來的 outputs PVC 可被 uid 1000 寫
+      containers:
+        - name: ppt-agent
+          image: ppt-agent:0.1.0
+          imagePullPolicy: Never   # 本地 image 已匯進 k3s containerd，不對外拉
+          ports: [ { containerPort: 8000 } ]
+          env:
+            - { name: MCP_TRANSPORT,        value: "sse" }
+            - { name: MCP_HOST,             value: "0.0.0.0" }
+            - { name: MCP_PORT,             value: "8000" }
+            - { name: OUTPUTS_DIR,          value: "/data/outputs" }
+            - { name: PUBLIC_FILES_PREFIX,  value: "/files" }
+            - { name: PPT_MAX_CONCURRENCY,  value: "2" }
+          resources:               # 對應 agent.yaml（§16）
+            requests: { cpu: "250m", memory: "256Mi" }
+            limits:   { cpu: "750m", memory: "512Mi" }
+          readinessProbe:          # MCP-SSE 無 HTTP 健康端點 → tcpSocket
+            tcpSocket: { port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: 8000 }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          volumeMounts:
+            - { name: outputs, mountPath: /data/outputs }
+      volumes:
+        - name: outputs
+          persistentVolumeClaim: { claimName: outputs-pvc }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ppt-agent          # ← erp-api 連這個固定名稱；Pod 擴縮自動分流
+spec:
+  selector: { app: ppt-agent }
+  ports: [ { port: 8000, targetPort: 8000 } ]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ppt-agent
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: ppt-agent }
+  minReplicas: 1
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 65 }

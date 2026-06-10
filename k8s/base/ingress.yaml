@@ -1,0 +1,16 @@
+# 對外入口（k3s 內建 Traefik）。只開前端；/api、/files 由前端同源代理到 erp-api。
+# 雲端換 nginx-ingress 時：改 ingressClassName / annotations，其餘不動。
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: erp-agent
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port: { number: 3000 }

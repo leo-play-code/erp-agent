@@ -1,0 +1,13 @@
+# 共享產物：ppt-agent 寫 .pptx、erp-api 的 /files 讀同一份。
+# 單機 k3s 用 local-path（RWO，同節點上多 Pod 可共掛）。
+# 多節點/雲端：改 ReadWriteMany（NFS/EFS）或改用 MinIO 物件儲存交付（白皮書 §21.4）。
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: outputs-pvc
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
+  # storageClassName: 雲端換成對應 SC；k3s 預設 local-path 可省略

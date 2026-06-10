@@ -1,0 +1,68 @@
+# erp-agent API（FastAPI + LangGraph supervisor，host/消費端）。
+# 路由在行程內（in-process）；只有對外部化的 ppt-agent 走 MCP/HTTP（PPT_AGENT_URL）。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: erp-api
+  labels: { app: erp-api }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: erp-api }
+  template:
+    metadata:
+      labels: { app: erp-api }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000             # /files 讀的 outputs PVC（ppt-agent 寫進去）
+      # 等 DB 與 ppt-agent 就緒再啟動：api 啟動時會 import graph→建 ppt agent→
+      # 經 sse 載入 ppt-agent 工具，故 ppt-agent 必須先 up，工具才載得到。
+      initContainers:
+        - name: wait-deps
+          image: erp-api:0.1.0
+          imagePullPolicy: Never
+          command: ["python", "-c"]
+          args:
+            - |
+              import socket, time
+              for host, port in [("postgres", 5432), ("ppt-agent", 8000)]:
+                  while True:
+                      try:
+                          socket.create_connection((host, port), 2); break
+                      except OSError:
+                          print("waiting", host, port); time.sleep(2)
+              print("deps ready")
+      containers:
+        - name: erp-api
+          image: erp-api:0.1.0
+          imagePullPolicy: Never
+          ports: [ { containerPort: 8000 } ]
+          envFrom:
+            - configMapRef: { name: agent-config }
+            - secretRef: { name: agent-secrets }
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits:   { cpu: "1",    memory: "1Gi" }
+          readinessProbe:
+            httpGet: { path: /api/agents, port: 8000 }
+            initialDelaySeconds: 8
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: 8000 }
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          volumeMounts:
+            - { name: outputs, mountPath: /app/generated }
+      volumes:
+        - name: outputs
+          persistentVolumeClaim: { claimName: outputs-pvc }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: erp-api
+spec:
+  selector: { app: erp-api }
+  ports: [ { port: 8000, targetPort: 8000 } ]
