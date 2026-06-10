@@ -15,6 +15,7 @@ data:
   OPENAI_MODEL: "gpt-4o-mini"
   LLM_TEMPERATURE: "0"
   OPENAI_MAX_RETRIES: "2"          # 撞 rate limit 自動重試（指數退避）
+  API_MAX_CONCURRENCY: "8"         # 同時在途 LLM 請求上限（背壓，§25 P1-4），超量回 429
   # 模型分級（選填，§25 P1-7）：不設則全用 OPENAI_MODEL。要分級就取消註解：
   # OPENAI_MODEL_FAST: "gpt-4o-mini"     # supervisor 路由
   # OPENAI_MODEL_STRONG: "gpt-4o"        # analyst 決策分析
