@@ -3,7 +3,7 @@
 # 需要 sudo（k3s ctr）。執行前先確認三個 image 都在：
 #   docker images | grep 0.1.0
 set -euo pipefail
-for img in erp-api:0.1.0 erp-frontend:0.1.0 ppt-agent:0.1.0; do
+for img in erp-api:0.1.0 erp-frontend:0.1.0 ppt-workflow:0.1.0; do
   echo "→ importing $img into k3s containerd"
   docker save "$img" | sudo k3s ctr images import -
 done

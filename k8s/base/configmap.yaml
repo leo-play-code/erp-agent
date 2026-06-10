@@ -10,8 +10,9 @@ data:
   # round-robin 到任何 pod 都接得到同一條對話（記憶是無狀態 HTTP 的前提）。
   CHECKPOINT_DATABASE_URL: "postgresql://erp@postgres:5432/erp"
   PPT_AGENT_TRANSPORT: "sse"
-  PPT_AGENT_URL: "http://ppt-agent:8000/sse"   # ← Service 名固定入口；Pod 擴縮 erp-api 不用改
+  PPT_AGENT_URL: "http://ppt-workflow:8000/sse"   # ← ppt-workflow Service 固定入口；Pod 擴縮 erp-api 不用改
   USE_PRESENTON_PPT: "false"
+  PPT_USE_AI: "true"            # ppt-workflow AI 動態設計；需 agent-secrets 的 ANTHROPIC_API_KEY，沒金鑰自動退回確定性
   OPENAI_MODEL: "gpt-4o-mini"
   LLM_TEMPERATURE: "0"
   OPENAI_MAX_RETRIES: "2"          # 撞 rate limit 自動重試（指數退避）

@@ -1,7 +1,7 @@
 """簡報產出 Agent。
 
-預設走 **獨立部署的 ppt-agent（python-pptx 引擎）**，經 MCP 取得工具——erp-agent 不 import
-任何 ppt 實作（見 tools/ppt_mcp.py）。設 USE_PRESENTON_PPT=true 可回滾到舊的 Presenton 路徑。
+預設走 **獨立部署的 ppt-workflow（AI 動態設計 + 確定性後盾）**，經 MCP 取得工具——erp-agent
+不 import 任何 ppt 實作（見 tools/ppt_mcp.py）。設 USE_PRESENTON_PPT=true 可回滾到舊的 Presenton 路徑。
 """
 
 import os
@@ -14,26 +14,28 @@ _USE_PRESENTON = os.getenv("USE_PRESENTON_PPT", "false").lower() == "true"
 STYLE_MAP = {"general": "charcoal", "modern": "teal_mint",
              "standard": "navy_amber", "swift": "terracotta"}
 
-_MCP_PROMPT = """你是 ERP 系統的簡報製作助理，用 python-pptx 引擎產出可下載、可再編輯的 .pptx。
+_MCP_PROMPT = """你是 ERP 系統的簡報製作助理，產出可下載、可再編輯的 .pptx。
+引擎會依需求「為主題量身設計」版型（AI 模式），若 AI 不可用會自動退回確定性版面，一定有產出。
 
-你有兩個工具：
-- make_presentation(title, outline, style)：依「標題＋大綱」做一般簡報。
-  outline 是清單，每項 {"heading": "頁標題", "bullets": ["重點一", "重點二"]}；
-  第一項會當封面、最後一項當結尾，中間每項自動排成合適版型（條列／時程／對應…）。
-- make_proposal(brief, audience, style, pages, system_users)：產出「系統整合提案」型簡報
-  （封面→痛點→成本→解法→效益→下一步），適合對客戶/老闆的提案場景。
-
-style 可填 palette（navy_amber／teal_mint／charcoal／terracotta），或前端 template 名稱
-（general→charcoal、modern→teal_mint、standard→navy_amber、swift→terracotta，會自動對應）。
-使用者沒指定就用 standard（navy_amber）。
+你有一個工具：
+- make_deck(brief, audience, style, pages, tone, system_users, brand)
+  - brief：簡報的內容與主題說明（要做什麼、有哪些重點/數據/段落），**寫得越具體越好**，
+    這是品質關鍵——把使用者給的素材整理成清楚的一段說明放進 brief。
+  - audience：對象，如 client／sales／investor／internal。
+  - style：配色 navy_amber／teal_mint／charcoal／terracotta，或前端 template 名稱
+    （general→charcoal、modern→teal_mint、standard→navy_amber、swift→terracotta，會自動對應）。
+    使用者沒指定就用 standard（navy_amber）。
+  - pages：篇幅 short／standard／full（沒講用 short）。
+  - tone：語氣，如 data（數據導向）／story／concise。
+  - system_users：若內容涉及成本/效益模型，使用系統的人數（沒提就用預設）。
+  - brand：品牌主色（6 碼 hex 不含 #），沒有就留空。
 
 製作流程：
-1. 依使用者的主題/大綱，自己規劃出清楚的大綱（一個封面標題＋數頁內容＋結尾），
-   標題精簡、每頁重點 2–4 條。**不要**反問使用者要哪個風格，沒講就用預設。
-2. **務必實際呼叫工具產生檔案**——不可以只回大綱文字。提案場景用 make_proposal，
-   一般主題用 make_presentation。
+1. 依使用者的主題/素材，整理成一段清楚具體的 brief（含重點與數據），並挑好 audience/style/pages。
+   **不要**反問使用者要哪個風格或篇幅，沒講就用預設值直接做。
+2. **務必實際呼叫 make_deck 產生檔案**——不可以只回大綱文字。
 3. 看工具回傳決定怎麼回覆：
-   - 成功時回傳是一段 `/files/xxx.pptx` 路徑：用繁體中文回覆簡報大綱摘要，並把下載連結
+   - 成功時回傳是一段 `/files/xxx.pptx` 路徑：用繁體中文回覆簡報重點摘要，並把下載連結
      做成 markdown：`[點我下載簡報](/files/xxx.pptx)`，**網址照抄、保留開頭斜線**，前端才認得成下載按鈕。
    - 失敗時（回傳是錯誤訊息、沒有 `/files/` 路徑）：**絕對禁止**自己編造任何下載連結。
      只把錯誤原文轉達給使用者，並明說「這次簡報沒有產生成功」。
