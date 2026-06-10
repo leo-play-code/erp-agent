@@ -15,7 +15,7 @@
 | **sql** | 用自然語言查 ERP 資料庫的**具體數字**(人資:員工/部門/特休/請假;製造:客戶/訂單/產品/採購/生產工單/品檢/機台/庫存) | 唯讀 text-to-SQL + **SQL 範例庫語意檢索**(23 條已驗證 SQL)+ schema 檢索 |
 | **analyst** | **決策分析師**:跨領域整合製造營運資料,算 KPI(營收毛利/準交/良率/品質/庫存/供應商/客戶集中度)、找趨勢與風險、給老闆可拍板的決策建議 | 與 sql 共用唯讀 SQL 工具,分工做整合分析 |
 | **rag** | **知識庫問答(RAG)**:語意檢索已建檔文件並標來源回答 | 純 Python 餘弦 + OpenAI embedding,索引在 `rag_index/` |
-| **ppt** | 依主題/大綱產出**可下載、可再編輯的 .pptx 簡報** | **Presenton**(自架開源引擎,Docker)|
+| **ppt** | 依主題/大綱產出**可下載、可再編輯的 .pptx 簡報** | **ppt-agent**(獨立部署的可攜式 agent,python-pptx 引擎,經 **MCP** 接回;舊 Presenton 仍可 `USE_PRESENTON_PPT=true` 回滾)|
 | **pdf** | 讀取 PDF/文件並做重點分析 | `pypdf` |
 | **image** | **圖片轉文字(OCR)** | 多模態 LLM |
 | **inventory** | 庫存品項/數量/儲位查詢 | 目前為示範用寫死資料(可換真資料庫) |
@@ -31,7 +31,7 @@
 ### 資料與後端
 - **PostgreSQL 私有 cluster**(專案內 `./pgdata`,跑在 **5433**,唯讀 text-to-SQL 安全雙層防護):**18 張表 / ~5300 筆 / 18 個月時序**(4 張 HR + 14 張製造業),由 `db/seed.py`、`db/seed_mfg.py` 灌入(固定亂數種子、可重跑)。
 - **FastAPI 後端**(8000):`/api/chat/stream`(NDJSON 串流)、`/api/agent`、`/api/agents`、`/api/ppt/templates`、`/api/rag/*`、`/files/*`(下載產出檔)。
-- **PPT 外掛 Presenton**:自架於 Docker(localhost:5000),提供 general/modern/standard/swift 四種 template。
+- **PPT 引擎 ppt-agent**:獨立部署的**可攜式 agent**(`ppt-agent/`,python-pptx),對外只露出 **MCP** 契約(`make_presentation` / `make_proposal`);erp-agent 經 MCP 連它、不 import 其實作。產出寫到與 `/files` 共享的目錄即可下載。template:general/modern/standard/swift(對應引擎四套配色)。詳見 `CLAUDE.md` 的「可攜式 Agent」一節。
 
 ---
 
@@ -63,7 +63,7 @@ venv/bin/pip install -r requirements.txt
 cp .env.example .env   # 填入 OPENAI_API_KEY 等(見下方)
 ```
 
-`.env` 主要設定:`OPENAI_API_KEY`、`DATABASE_URL=postgresql://erp@localhost:5433/erp`、`PRESENTON_URL`(PPT 外掛)、選填 `PEXELS_API_KEY`(Presenton 配圖)。
+`.env` 主要設定:`OPENAI_API_KEY`、`DATABASE_URL=postgresql://erp@localhost:5433/erp`;PPT 相關(`PPT_AGENT_*`、回滾用的 `USE_PRESENTON_PPT`/`PRESENTON_*`)多由 `start.sh` 自動處理,見 `.env.example`。
 
 ### 2. 灌入示範資料(第一次)
 ```bash
@@ -77,14 +77,16 @@ bash start.sh        # PostgreSQL(5433)+ 後端 API(8000)+ 前端(3005),冪等�
 ```
 打開 **http://localhost:3005**。停止:`bash stop.sh`(加 `--all` 連 Postgres 一起停)。
 
-### 4. 啟動 PPT 外掛 Presenton(選用,需 Docker)
-```bash
-docker run -d --name presenton -p 5000:80 \
-  -e LLM=openai -e OPENAI_API_KEY=<你的key> -e OPENAI_MODEL=gpt-4.1 \
-  -e IMAGE_PROVIDER=pexels -e PEXELS_API_KEY=<你的pexels> \
-  ghcr.io/presenton/presenton:latest
-```
-> Presenton 沒起也不影響其他功能;只有 ppt agent 產檔時會用到。**重點**:務必帶 `LLM=openai`,否則會退到慢速本地模型導致間歇失敗。
+### 4. PPT 引擎 ppt-agent(預設啟用,獨立部署的 sibling 服務)
+ppt-agent 是**和 erp-agent 平行的獨立服務**,預設在 `../agents/ppt-agent`(自帶 venv/Dockerfile/compose)。
+erp-agent **只用 URL(MCP)連它,不 import**。`start.sh` 會自動帶起它:
+- **有 Docker** → 用 ppt-agent **自己的** compose 起容器(sse,對外 8002);
+- **無 Docker** → 退回 stdio(由 api 直接 spawn,需先建好其 venv:
+  `cd ../agents/ppt-agent && python -m venv .venv && .venv/bin/pip install -e ".[mcp,rest]"`)。
+
+產出寫到 erp-agent 的 `./generated`(= `/files`)即可下載,不需 Presenton。
+> 換成別的位置:設 `PPT_AGENT_DIR`;連遠端既有服務:設 `PPT_AGENT_URL`。
+> 回滾:`USE_PRESENTON_PPT=true` 切回舊 Presenton,並 `docker compose up -d presenton`。
 
 ### 驗證(不需 API Key)
 ```bash
@@ -109,7 +111,7 @@ venv/bin/python sql_library/validate.py   # 範例庫每條 SQL 實跑驗證
 - [x] **SQL 範例庫 + schema 雙語意檢索**(retrieval-augmented SQL,提升準確度)
 - [x] analyst 決策分析 Agent(跨域 KPI 整合)
 - [x] RAG 知識庫問答 + 後台管理 UI
-- [x] PPT 改走自架 Presenton(可編輯 .pptx,4 種 template)
+- [x] PPT 改走**可攜式 ppt-agent**(python-pptx 引擎,獨立部署、經 MCP 接回;Presenton 留作回滾)
 - [x] PDF 分析、OCR、email 草稿、報表分析、庫存查詢
 
 **未來可做**
@@ -124,6 +126,6 @@ venv/bin/python sql_library/validate.py   # 範例庫每條 SQL 實跑驗證
 
 ## 技術棧
 
-LangChain 1.3 · LangGraph 1.2 · langchain-openai · FastAPI · uvicorn · PostgreSQL(psycopg)· Next.js 16 · React 19 · Tailwind CSS 4 · react-markdown · Presenton(PPT)
+LangChain 1.3 · LangGraph 1.2 · langchain-openai · langchain-mcp-adapters(MCP)· FastAPI · uvicorn · PostgreSQL(psycopg)· Next.js 16 · React 19 · Tailwind CSS 4 · react-markdown · python-pptx(ppt-agent)
 
 所有面向使用者的輸出皆為**繁體中文**。

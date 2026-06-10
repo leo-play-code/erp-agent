@@ -29,6 +29,8 @@ body {
   font-family: var(--font-inter), "Noto Sans TC", "PingFang TC",
     "Microsoft JhengHei", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+  /* 關掉「雙擊放大」手勢(點按鈕不會被誤判成放大),也順帶移除點擊延遲 */
+  touch-action: manipulation;
 }
 
 .container {

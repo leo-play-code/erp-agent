@@ -106,10 +106,21 @@ def _seed_from_history(history_json: str | None):
     return msgs
 
 
+# 走 python-pptx ppt-agent（預設）時，template 是固定四款，對應引擎 palette；
+# 回滾到 Presenton（USE_PRESENTON_PPT=true）時改回向 Presenton 動態查詢。
+_USE_PRESENTON_PPT = os.getenv("USE_PRESENTON_PPT", "false").lower() == "true"
+_MCP_TEMPLATES = [
+    {"key": "general", "zh": "通用"},
+    {"key": "modern", "zh": "現代"},
+    {"key": "standard", "zh": "標準"},
+    {"key": "swift", "zh": "簡潔"},
+]
+
+
 @app.get("/api/ppt/templates")
 def list_ppt_templates():
-    """給單一 agent 頁的簡報 template 選擇器用：回傳你架設的 Presenton 目前可用的 template。"""
-    return template_cards()
+    """給單一 agent 頁的簡報 template 選擇器用：回傳目前可用的 template。"""
+    return template_cards() if _USE_PRESENTON_PPT else _MCP_TEMPLATES
 
 
 @app.get("/api/agents")
