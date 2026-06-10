@@ -7,7 +7,7 @@
 # 注意：
 # - 已在跑的服務會自動略過，不會重開（可重複執行）。
 # - 不會重新灌資料（DB cluster 持久化，資料都在）。要重灌：venv/bin/python -m db.seed / db.seed_mfg
-# - Presenton 跑在你的 Docker（localhost:5000），不由此腳本管理，請自行 docker run。
+# - 簡報引擎預設用 ppt-agent（python-pptx，本腳本會帶起其容器）；舊 Presenton 僅 USE_PRESENTON_PPT=true 時才用。
 cd "$(dirname "$0")" || exit 1
 ROOT="$(pwd)"
 
@@ -32,6 +32,32 @@ if running 5433; then
   echo "  ✓ PostgreSQL 已在跑 (5433)"
 else
   if [ -d pgdata ]; then bash db/pg.sh start; else bash db/pg.sh init; fi
+fi
+
+# 1.5) 簡報引擎 ppt-agent（預設 ppt 引擎，python-pptx）：它是【獨立部署的 sibling 服務】
+#      (預設 ../agents/ppt-agent，有自己的 docker-compose.yml)。erp-agent 只用 URL(MCP/sse)連它。
+#      優先用它自己的 docker 容器；無 docker 則退回 stdio（本機 spawn，需 ppt-agent/.venv）。
+#      產出寫到 ./generated（= api 的 /files）。USE_PRESENTON_PPT=true 時才略過、改走舊 Presenton。
+export OUTPUTS_DIR="$ROOT/generated"
+PPT_AGENT_PORT="${PPT_AGENT_PORT:-8002}"
+PPT_AGENT_DIR="${PPT_AGENT_DIR:-$ROOT/../agents/ppt-agent}"
+export PPT_AGENT_DIR
+if [ "${USE_PRESENTON_PPT:-false}" != "true" ]; then
+  if command -v docker >/dev/null 2>&1 && [ -f "$PPT_AGENT_DIR/docker-compose.yml" ]; then
+    echo "  · 啟動 ppt-agent 容器（獨立服務，首次會 build，請稍候）…"
+    if ( cd "$PPT_AGENT_DIR" && PPT_AGENT_PORT="$PPT_AGENT_PORT" PPT_OUTPUTS_DIR="$ROOT/generated" \
+         docker compose up -d >/dev/null 2>&1 ); then
+      export PPT_AGENT_TRANSPORT=sse
+      export PPT_AGENT_URL="http://127.0.0.1:${PPT_AGENT_PORT}/sse"
+      echo "  ✓ ppt-agent 容器啟動 (sse :$PPT_AGENT_PORT)"
+    else
+      export PPT_AGENT_TRANSPORT=stdio
+      echo "  · ppt-agent 容器啟動失敗，改用 stdio（需 $PPT_AGENT_DIR/.venv）"
+    fi
+  else
+    export PPT_AGENT_TRANSPORT=stdio
+    echo "  · 無 Docker/找不到 ppt-agent compose：改用 stdio（需 $PPT_AGENT_DIR/.venv）"
+  fi
 fi
 
 # 2) 後端 API（$API_PORT）
@@ -64,14 +90,14 @@ if [ -n "${RAG_WATCH_DIR:-}" ]; then
   fi
 fi
 
-# 5) Presenton 簡報引擎（選用）：有 Docker 且 .env 設了 PRESENTON_URL 才自動帶起
-if grep -qE '^PRESENTON_URL=' .env 2>/dev/null && [ -f docker-compose.yml ]; then
+# 5) Presenton 簡報引擎（回滾用）：僅在 USE_PRESENTON_PPT=true 時才帶起（預設用 ppt-agent，不需要它）
+if [ "${USE_PRESENTON_PPT:-false}" = "true" ] && [ -f docker-compose.yml ]; then
   if command -v docker >/dev/null 2>&1; then
-    docker compose up -d >/dev/null 2>&1 \
-      && echo "  ✓ Presenton 已啟動 (docker compose)" \
-      || echo "  · Presenton 啟動失敗（檢查 Docker 是否在跑 / .env 的 OPENAI_API_KEY）"
+    docker compose up -d presenton >/dev/null 2>&1 \
+      && echo "  ✓ Presenton 已啟動 (回滾路徑)" \
+      || echo "  · Presenton 啟動失敗（檢查 Docker / .env 的 OPENAI_API_KEY）"
   else
-    echo "  · 無 Docker，略過 Presenton（ppt 會用內建版型）"
+    echo "  · 無 Docker，無法啟動 Presenton 回滾路徑"
   fi
 fi
 

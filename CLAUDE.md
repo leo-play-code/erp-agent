@@ -129,6 +129,73 @@ venv/bin/python sql_library/validate.py   # catalog 每條 SQL 實跑，全綠�
 
 ---
 
+## 可攜式 Agent(MCP 接入) —— 當 agent 該獨立部署時
+
+一般 agent 照前面 SOP(tools + agents + registry)寫,跑在同一個行程。**但當某個能力需要
+獨立部署、被外部重用、或相依很重/想隔離**時,把它做成「可攜式 agent」:一個**獨立的服務**,
+對外只露出 **MCP 契約**,erp-agent 經 MCP 連它,**不 import 它的任何實作**。
+
+**位置慣例(重要)**:可攜式 agent 是**和 erp-agent 平行(sibling)的獨立單位**,不放進
+erp-agent 的套件裡(放進去再 import = 把想拆掉的耦合裝回去)。放在 workspace 同層:
+```
+/home/hermes/
+  erp-agent/            ← host(消費端)
+  agents/
+    ppt-agent/          ← 平行,自己的 venv/容器/.git;erp 靠 URL 連,不靠 import
+    <下一個>-agent/      ← 之後比照
+```
+分界不是「資料夾」是「各自獨立的套件＋容器＋用協定連」。判斷只有兩條:**①每個 agent 有自己的
+相依環境＋容器;②erp-agent 靠 URL 連它、不靠 import**。守住這兩條,放同 repo 或分開都行。
+
+**參考實作:`../agents/ppt-agent/`**(以 `portable-agent-template` 為基底,python-pptx 引擎,自帶 `docker-compose.yml`)。
+
+**標準(每個可攜式 agent 都照這個長)**:
+```
+<agent>/
+  agent.yaml          ← manifest:id/version/transports/tools/resources(host 讀這份就會用)
+  pyproject.toml      ← 自己的相依、自己的環境
+  Dockerfile          ← 自己的容器
+  src/<pkg>/
+    core/             ← ★純核心:只 import 標準庫 + 領域套件(如 python-pptx)。
+                         絕不 import langchain/langgraph/mcp/fastapi —— 那些都在 adapters/。
+    adapters/
+      mcp_server.py   ← ★對外通用契約(FastMCP);只暴露白名單工具,不給「執行任意程式」能力
+      cli.py / rest.py / langgraph_node.py  ← 其他接法(選用)
+```
+兩條鐵律:**① core 不碰任何 I/O 與框架**(LLM/DB/檔案/網路走注入或 adapter);
+**② 對外只認 manifest 的 tools + 傳輸協定**,破壞性變更升 major 版本。
+
+**erp-agent 如何接(以 ppt 為例,仍只在 registry 一筆)**:
+1. `tools/ppt_mcp.py` 的 `load_ppt_tools()` 經 MCP(sse/stdio)載入工具並快取。
+   - **放在 `tools/` 而非 `graph/`**:因為 `agents/ppt_agent.py` 會 import 它,放 graph 會違反
+     單向依賴 `graph → agents → tools`。新增別的 MCP agent 比照,放 `tools/<名稱>_mcp.py`。
+   - **MCP 工具是 async-only**(sync invoke 會丟 NotImplementedError)。本專案 graph/api 全同步,
+     所以 `ppt_mcp` 把它**包成同步工具**(在背景事件迴圈執行緒跑 coroutine),呼叫端零感知、
+     不必把整張圖改成 async。
+   - **載入失敗一律回空清單**(服務沒起來時 erp_graph 仍能 import、驗證仍過)。
+2. `agents/ppt_agent.py` 的 `TOOLS` 來源改成 `load_ppt_tools()`;提示詞/`with_memory=False` 照舊。
+3. `graph/registry.py` 那筆**不用動**(build 函數內部換 tools 即可)。
+
+**產物交付契約**:可攜式 agent 寫檔到 `OUTPUTS_DIR`(uuid 檔名),工具回傳 `/files/<uuid>.pptx`;
+讓它和 api 指到**同一個產出目錄**(本機 = `./generated`;容器 = bind-mount/volume),`/files` 即可下載。
+
+**回滾**:`USE_PRESENTON_PPT=true` 切回舊的 Presenton 路徑(`tools/ppt_tools.py`,保留未刪)。
+
+**啟動**:`start.sh` 會用 ppt-agent **自己的** compose(`../agents/ppt-agent/docker-compose.yml`)起容器
+(sse);無 Docker 則退回 stdio(由 api 直接 spawn,需先建好其 `.venv`)。相關環境變數見 `.env.example`
+(`PPT_AGENT_TRANSPORT`/`PPT_AGENT_URL`/`PPT_AGENT_PORT`/`PPT_AGENT_DIR`/`OUTPUTS_DIR`)。
+換位置設 `PPT_AGENT_DIR`,連遠端既有服務設 `PPT_AGENT_URL`。
+
+**驗證可攜性(解耦不污染)**:
+```bash
+# erp-agent 不得 import 任何可攜式 agent 的實作(只經 MCP)
+grep -rn "import portable_agent\|from portable_agent\|from ppt_agent" agents/ api/ graph/ tools/   # 應為空
+# 可攜式 agent 的 core 不得 import 框架(在 agent 自己的 repo 裡跑)
+grep -rnE "^\s*(import|from)\s+(langchain|langgraph|mcp|fastapi|fastmcp)" ../agents/ppt-agent/src/*/core/  # 應為空
+```
+
+---
+
 ## Tool 撰寫規範
 
 - 一律用 `@tool` 裝飾器(from `langchain_core.tools`)。
