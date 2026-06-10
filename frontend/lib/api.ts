@@ -4,6 +4,55 @@
 // 若後端在別處，仍可用 NEXT_PUBLIC_API_URL 覆蓋成完整網址。
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
+// ── 登入 token：存 localStorage，每個 API 自動帶上 Authorization ───────────
+export function getToken(): string | null {
+  return typeof window !== "undefined" ? localStorage.getItem("erp_token") : null;
+}
+export type AuthUser = { email: string; name: string };
+export function getUser(): AuthUser | null {
+  if (typeof window === "undefined") return null;
+  const s = localStorage.getItem("erp_user");
+  return s ? (JSON.parse(s) as AuthUser) : null;
+}
+export function logout() {
+  localStorage.removeItem("erp_token");
+  localStorage.removeItem("erp_user");
+  if (typeof window !== "undefined") location.href = "/login";
+}
+
+// 所有 API 都走這個：帶上 token；遇 401（未登入/過期）清掉並導回登入頁。
+async function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const t = getToken();
+  const headers = { ...(init.headers || {}), ...(t ? { Authorization: `Bearer ${t}` } : {}) };
+  const res = await globalThis.fetch(input, { ...init, headers });
+  if (res.status === 401 && typeof window !== "undefined" && location.pathname !== "/login") {
+    logout();
+  }
+  return res;
+}
+
+export type AuthConfig = { auth_enabled: boolean; google_client_id: string };
+export async function getAuthConfig(): Promise<AuthConfig> {
+  try {
+    const res = await globalThis.fetch(`${BASE}/api/auth/config`);
+    return res.ok ? res.json() : { auth_enabled: false, google_client_id: "" };
+  } catch {
+    return { auth_enabled: false, google_client_id: "" };
+  }
+}
+
+// Google ID token → 自家 JWT；存起來（首次登入即註冊）。
+export async function loginWithGoogle(credential: string): Promise<AuthUser> {
+  const form = new FormData();
+  form.append("credential", credential);
+  const res = await globalThis.fetch(`${BASE}/api/auth/google`, { method: "POST", body: form });
+  if (!res.ok) throw new Error("登入失敗，請重試");
+  const data = await res.json();
+  localStorage.setItem("erp_token", data.token);
+  localStorage.setItem("erp_user", JSON.stringify(data.user));
+  return data.user as AuthUser;
+}
+
 export type FileLink = {
   url: string; // 可直接點的絕對網址
   download: boolean; // true=下載（如 .pdf/.pptx）；false=在新分頁開啟（如 .html）
@@ -34,7 +83,7 @@ export type ChatMessage = {
 };
 
 export async function listAgents(): Promise<AgentInfo[]> {
-  const res = await fetch(`${BASE}/api/agents`);
+  const res = await apiFetch(`${BASE}/api/agents`);
   if (!res.ok) throw new Error("無法取得 Agent 清單");
   return res.json();
 }
@@ -45,7 +94,7 @@ export type PptTemplate = {
 };
 
 export async function listPptTemplates(): Promise<PptTemplate[]> {
-  const res = await fetch(`${BASE}/api/ppt/templates`);
+  const res = await apiFetch(`${BASE}/api/ppt/templates`);
   if (!res.ok) throw new Error("無法取得 Presenton template 清單");
   return res.json();
 }
@@ -58,7 +107,7 @@ export type PptOptions = {
 };
 
 export async function listPptOptions(): Promise<PptOptions> {
-  const res = await fetch(`${BASE}/api/ppt/options`);
+  const res = await apiFetch(`${BASE}/api/ppt/options`);
   if (!res.ok) throw new Error("無法取得簡報選項");
   return res.json();
 }
@@ -72,7 +121,7 @@ export async function runAgent(
   form.append("name", name);
   form.append("message", message);
   if (file) form.append("file", file);
-  const res = await fetch(`${BASE}/api/agent`, { method: "POST", body: form });
+  const res = await apiFetch(`${BASE}/api/agent`, { method: "POST", body: form });
   if (!res.ok) throw new Error((await res.text()) || "執行失敗");
   return (await res.json()).reply;
 }
@@ -86,7 +135,7 @@ export async function sendChat(
   form.append("message", message);
   form.append("session_id", sessionId);
   if (file) form.append("file", file);
-  const res = await fetch(`${BASE}/api/chat`, { method: "POST", body: form });
+  const res = await apiFetch(`${BASE}/api/chat`, { method: "POST", body: form });
   if (!res.ok) throw new Error((await res.text()) || "執行失敗");
   return (await res.json()).messages;
 }
@@ -112,7 +161,7 @@ async function errText(res: Response, fallback: string): Promise<string> {
 }
 
 export async function ragStats(): Promise<KbSummary> {
-  const res = await fetch(`${BASE}/api/rag/stats`);
+  const res = await apiFetch(`${BASE}/api/rag/stats`);
   if (!res.ok) throw new Error("無法取得知識庫現況");
   return res.json();
 }
@@ -120,7 +169,7 @@ export async function ragStats(): Promise<KbSummary> {
 export async function ragSyncFolder(folderPath: string): Promise<string> {
   const form = new FormData();
   form.append("folder_path", folderPath);
-  const res = await fetch(`${BASE}/api/rag/sync`, { method: "POST", body: form });
+  const res = await apiFetch(`${BASE}/api/rag/sync`, { method: "POST", body: form });
   if (!res.ok) throw new Error(await errText(res, "同步資料夾失敗"));
   return (await res.json()).text;
 }
@@ -128,7 +177,7 @@ export async function ragSyncFolder(folderPath: string): Promise<string> {
 export async function ragUpload(file: File): Promise<string> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(`${BASE}/api/rag/upload`, { method: "POST", body: form });
+  const res = await apiFetch(`${BASE}/api/rag/upload`, { method: "POST", body: form });
   if (!res.ok) throw new Error(await errText(res, "上傳建索引失敗"));
   return (await res.json()).text;
 }
@@ -142,7 +191,7 @@ export async function wikiUpload(
 ): Promise<{ drafts: string[]; text: string }> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(`${BASE}/api/wiki/upload`, { method: "POST", body: form });
+  const res = await apiFetch(`${BASE}/api/wiki/upload`, { method: "POST", body: form });
   if (!res.ok) throw new Error(await errText(res, "上傳/編譯失敗"));
   return res.json();
 }
@@ -153,14 +202,14 @@ export async function wikiCompileFolder(
 ): Promise<{ files: number; drafts: number; text: string }> {
   const form = new FormData();
   form.append("folder_path", folderPath);
-  const res = await fetch(`${BASE}/api/wiki/compile-folder`, { method: "POST", body: form });
+  const res = await apiFetch(`${BASE}/api/wiki/compile-folder`, { method: "POST", body: form });
   if (!res.ok) throw new Error(await errText(res, "資料夾編譯失敗"));
   return res.json();
 }
 
 // 取得目前所有待審草稿（檔名 + 內容）。
 export async function wikiDrafts(): Promise<WikiDraft[]> {
-  const res = await fetch(`${BASE}/api/wiki/drafts`);
+  const res = await apiFetch(`${BASE}/api/wiki/drafts`);
   if (!res.ok) throw new Error("無法取得草稿清單");
   return res.json();
 }
@@ -169,7 +218,7 @@ export async function wikiDrafts(): Promise<WikiDraft[]> {
 export async function wikiDeleteDraft(name: string): Promise<string> {
   const form = new FormData();
   form.append("name", name);
-  const res = await fetch(`${BASE}/api/wiki/draft/delete`, { method: "POST", body: form });
+  const res = await apiFetch(`${BASE}/api/wiki/draft/delete`, { method: "POST", body: form });
   if (!res.ok) throw new Error(await errText(res, "刪除草稿失敗"));
   return (await res.json()).text;
 }
@@ -179,7 +228,7 @@ export async function wikiPublish(name: string, content: string): Promise<string
   const form = new FormData();
   form.append("name", name);
   form.append("content", content);
-  const res = await fetch(`${BASE}/api/wiki/publish`, { method: "POST", body: form });
+  const res = await apiFetch(`${BASE}/api/wiki/publish`, { method: "POST", body: form });
   if (!res.ok) throw new Error(await errText(res, "發布失敗"));
   return (await res.json()).text;
 }
@@ -188,7 +237,7 @@ export async function wikiPublish(name: string, content: string): Promise<string
 export async function wikiPublishAll(items: WikiDraft[]): Promise<string> {
   const form = new FormData();
   form.append("payload", JSON.stringify(items));
-  const res = await fetch(`${BASE}/api/wiki/publish-all`, { method: "POST", body: form });
+  const res = await apiFetch(`${BASE}/api/wiki/publish-all`, { method: "POST", body: form });
   if (!res.ok) throw new Error(await errText(res, "全部發布失敗"));
   return (await res.json()).text;
 }
@@ -216,7 +265,7 @@ export async function streamChat(
   form.append("session_id", sessionId);
   if (file) form.append("file", file);
   if (opts?.history?.length) form.append("history", JSON.stringify(opts.history));
-  const res = await fetch(`${BASE}/api/chat/stream`, {
+  const res = await apiFetch(`${BASE}/api/chat/stream`, {
     method: "POST",
     body: form,
     signal: opts?.signal,

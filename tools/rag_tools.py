@@ -25,6 +25,8 @@ from langchain_openai import OpenAIEmbeddings
 from markitdown import MarkItDown
 from pypdf import PdfReader  # markitdown 轉換失敗時的 PDF 後援
 
+from tools.tenant import get_tenant  # 多租戶：每使用者一個獨立知識庫
+
 load_dotenv()
 
 INDEX_DIR = Path(__file__).resolve().parent.parent / "rag_index"
@@ -32,11 +34,20 @@ INDEX_FILE = INDEX_DIR / "index.json"
 EMBED_MODEL = "text-embedding-3-small"
 
 # 索引持久化（白皮書 §25：RAG 索引也是「狀態」，多 replica/跨節點要共用才不會擴展就掉資料）。
-# 設了 S3_ENDPOINT_URL+S3_BUCKET → 索引存物件儲存（MinIO/S3）的 rag/index.json，所有 replica
-# 任何節點都讀同一份；沒設 → 退回本地 rag_index/index.json（單機開發）。
-# 用 etag 記憶體快取：每次只做輕量 head 檢查，內容沒變就用記憶體、不重抓整包；變了才下載。
-_S3_INDEX_KEY = "rag/index.json"
-_idx_cache: dict = {"etag": None, "items": None}
+# 設了 S3_ENDPOINT_URL+S3_BUCKET → 索引存物件儲存（MinIO/S3）；沒設 → 退回本地檔（單機開發）。
+# **多租戶**：每使用者一份索引——key = rag/<tenant>/index.json（default 租戶沿用舊路徑以相容）。
+# 用 etag 記憶體快取（per-tenant）：每次只做輕量 head 檢查，內容沒變就用記憶體、不重抓整包。
+_idx_cache: dict = {}  # tenant -> {"etag":..., "items":...}
+
+
+def _index_key() -> str:
+    t = get_tenant()
+    return "rag/index.json" if t == "default" else f"rag/{t}/index.json"
+
+
+def _local_index_file() -> Path:
+    t = get_tenant()
+    return INDEX_FILE if t == "default" else INDEX_DIR / t / "index.json"
 
 
 def _s3_enabled() -> bool:
@@ -62,39 +73,44 @@ def _embeddings():
 
 
 def _load() -> list[dict]:
+    tenant = get_tenant()
     if _s3_enabled():
         from botocore.exceptions import ClientError
 
-        bucket = os.getenv("S3_BUCKET")
+        bucket, key = os.getenv("S3_BUCKET"), _index_key()
+        cache = _idx_cache.get(tenant)
         try:
-            etag = _s3().head_object(Bucket=bucket, Key=_S3_INDEX_KEY)["ETag"]
-            if _idx_cache["etag"] == etag and _idx_cache["items"] is not None:
-                return _idx_cache["items"]  # 沒變：用記憶體快取，不重抓
-            obj = _s3().get_object(Bucket=bucket, Key=_S3_INDEX_KEY)
+            etag = _s3().head_object(Bucket=bucket, Key=key)["ETag"]
+            if cache and cache["etag"] == etag:
+                return cache["items"]  # 沒變：用記憶體快取，不重抓
+            obj = _s3().get_object(Bucket=bucket, Key=key)
             items = json.loads(obj["Body"].read().decode("utf-8")).get("items", [])
-            _idx_cache["etag"], _idx_cache["items"] = etag, items
+            _idx_cache[tenant] = {"etag": etag, "items": items}
             return items
         except ClientError as e:
             code = e.response.get("Error", {}).get("Code", "")
             if code in ("404", "NoSuchKey", "NotFound"):
-                return []  # 還沒建過索引
-            return _idx_cache["items"] or []  # 連線等問題：退回快取/空，別讓查詢炸掉
-    if INDEX_FILE.exists():
-        return json.loads(INDEX_FILE.read_text("utf-8")).get("items", [])
+                return []  # 這個租戶還沒建過索引
+            return cache["items"] if cache else []  # 連線等問題：退回快取/空，別讓查詢炸掉
+    f = _local_index_file()
+    if f.exists():
+        return json.loads(f.read_text("utf-8")).get("items", [])
     return []
 
 
 def _save(items: list[dict]) -> None:
+    tenant = get_tenant()
     if _s3_enabled():
         bucket = os.getenv("S3_BUCKET")
         body = json.dumps({"items": items}, ensure_ascii=False).encode("utf-8")
         resp = _s3().put_object(
-            Bucket=bucket, Key=_S3_INDEX_KEY, Body=body, ContentType="application/json"
+            Bucket=bucket, Key=_index_key(), Body=body, ContentType="application/json"
         )
-        _idx_cache["etag"], _idx_cache["items"] = resp.get("ETag"), items
+        _idx_cache[tenant] = {"etag": resp.get("ETag"), "items": items}
         return
-    INDEX_DIR.mkdir(exist_ok=True)
-    INDEX_FILE.write_text(json.dumps({"items": items}, ensure_ascii=False), "utf-8")
+    f = _local_index_file()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps({"items": items}, ensure_ascii=False), "utf-8")
 
 
 def _cosine(a: list[float], b: list[float]) -> float:

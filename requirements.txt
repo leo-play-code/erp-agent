@@ -13,6 +13,7 @@ python-pptx==1.0.2          # 簡報（.pptx）產出
 psycopg[binary]==3.3.4      # PostgreSQL 驅動（sql agent 查詢人事資料）
 psycopg-pool==3.3.1         # 連線池（checkpointer 對 Postgres 的可寫連線，併發安全）
 boto3==1.43.26             # 物件儲存（MinIO/S3）：/files 從 bucket 串流產物；不設 S3 env 不會用到
+PyJWT==2.13.0              # 登入：簽/驗自家 JWT（Google 登入後的 session token）
 
 # 後端 API（前端透過它呼叫 agents / 流程）
 fastapi==0.136.3

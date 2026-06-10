@@ -22,6 +22,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage
 
+from api.auth import (
+    AUTH_ENABLED,
+    GOOGLE_CLIENT_ID,
+    current_tenant,
+    current_tenant_var,
+    issue_app_jwt,
+    verify_google_id_token,
+)
 from graph.erp_graph import ASK_MARKER, erp_graph
 from graph.registry import AGENTS
 from tools.excel_import import import_excel
@@ -55,6 +63,21 @@ async def _concurrency_slot():
         yield
     finally:
         _inflight.release()
+
+
+# ── 登入 / 註冊（Google） ────────────────────────────────────────────────
+@app.get("/api/auth/config")
+def auth_config():
+    """前端問：要不要登入 + 用哪個 Google Client ID（公開值，故由後端供給，前端免重 build）。
+    沒設 GOOGLE_CLIENT_ID 就是單人模式，前端跳過登入頁。"""
+    return {"auth_enabled": AUTH_ENABLED, "google_client_id": GOOGLE_CLIENT_ID}
+
+
+@app.post("/api/auth/google")
+def auth_google(credential: str = Form(...)):
+    """前端送 Google ID token（credential）→ 驗證後回自家 JWT 與使用者資料（首次即註冊）。"""
+    user = verify_google_id_token(credential)
+    return {"token": issue_app_jwt(user), "user": {"email": user["email"], "name": user["name"]}}
 
 
 # 產生的檔案（例如 ppt agent 產出的簡報）放這裡，透過 /files/<檔名> 提供下載
@@ -248,6 +271,7 @@ async def run_agent(
     message: str = Form(...),
     file: UploadFile | None = File(None),
     _slot: None = Depends(_concurrency_slot),
+    tenant: str = Depends(current_tenant),
 ):
     """執行單一指定的 Agent。"""
     if name not in AGENTS:
@@ -264,9 +288,10 @@ async def chat(
     session_id: str = Form(...),
     file: UploadFile | None = File(None),
     _slot: None = Depends(_concurrency_slot),
+    tenant: str = Depends(current_tenant),
 ):
     """執行 supervisor 流程，回傳整段多 Agent 協作對話（依 session_id 保留記憶）。"""
-    config = {"configurable": {"thread_id": session_id}}
+    config = {"configurable": {"thread_id": f"{tenant}:{session_id}"}}
     result = erp_graph.invoke(
         {"messages": [("user", _compose(message, file))]}, config
     )
@@ -284,6 +309,7 @@ async def chat_stream(
     file: UploadFile | None = File(None),
     history: str | None = Form(None),
     _slot: None = Depends(_concurrency_slot),
+    tenant: str = Depends(current_tenant),
 ):
     """串流版 supervisor 流程：邊跑邊回傳，讓前端即時顯示「派了哪個 Agent、產出什麼」。
 
@@ -294,12 +320,15 @@ async def chat_stream(
         {"type":"error","detail":"..."}          發生錯誤
     """
     text = _compose(message, file)  # 需在請求生命週期內讀取上傳檔，故先組好
-    config = {"configurable": {"thread_id": session_id}}
+    config = {"configurable": {"thread_id": f"{tenant}:{session_id}"}}
     # 編輯/重跑分支會帶 history：用新的 session_id + 把先前對話當種子，避免與舊記憶衝突。
     # 一般接續對話不帶 history，靠 session_id 的既有記憶即可。
     seed = _seed_from_history(history) + [HumanMessage(content=text)]
 
     def events():
+        # 串流的 generator 是延後在 threadpool 執行，contextvar 可能跟不過來，
+        # 故在這裡用閉包捕到的 tenant 顯式設好，確保 RAG 等工具讀到正確租戶。
+        current_tenant_var.set(tenant)
         try:
             for update in erp_graph.stream(
                 {"messages": seed}, config, stream_mode="updates"
@@ -333,14 +362,16 @@ async def chat_stream(
 
 
 @app.get("/api/rag/stats")
-def rag_stats():
+def rag_stats(tenant: str = Depends(current_tenant)):
     """回傳知識庫現況的結構化資料（總段數、來源數、各來源段數）給後台顯示。"""
+    current_tenant_var.set(tenant)  # sync 端點走 threadpool，顯式設好供 rag_tools 讀
     return kb_summary()
 
 
 @app.post("/api/rag/sync")
-async def rag_sync(folder_path: str = Form(...)):
+async def rag_sync(folder_path: str = Form(...), tenant: str = Depends(current_tenant)):
     """設定／同步要訓練的資料夾：把該資料夾內所有文件增量建索引。"""
+    current_tenant_var.set(tenant)
     # 先擋掉「資料夾不存在」——否則 sync_folder 會回友善字串(HTTP 200)，
     # 前端會誤判成成功。回 400 讓前端正確顯示為錯誤。
     if not Path(folder_path).expanduser().is_dir():
@@ -348,36 +379,41 @@ async def rag_sync(folder_path: str = Form(...)):
     return {"text": sync_folder.invoke({"folder_path": folder_path})}
 
 
-# RAG 原始檔在物件儲存的前綴（與索引同 bucket，跨 replica/節點共用，見 rag_tools）。
+# RAG 原始檔在物件儲存的前綴（每租戶一個子前綴，跨 replica/節點共用，見 rag_tools）。
 _S3_UPLOAD_PREFIX = "uploads/"
 
 
 @app.post("/api/rag/upload")
-async def rag_upload(file: UploadFile = File(...)):
+async def rag_upload(file: UploadFile = File(...), tenant: str = Depends(current_tenant)):
     """上傳一個檔案加入知識庫（建索引）。以原檔名作為來源標籤。
 
     原檔保存供日後重嵌／下載／追溯：S3 模式存物件儲存（跨 replica 共用），否則存本地 uploads/。
     """
+    current_tenant_var.set(tenant)  # 供 rag_tools 索引到正確租戶
     safe = Path(file.filename or "upload").name  # 擋目錄穿越
     data = file.file.read()
     path = _UPLOADS / safe  # 先寫本地：ingest 要讀實體檔做嵌入
     with open(path, "wb") as f:
         f.write(data)
     result = ingest_file.invoke({"file_path": str(path)})
-    if _s3_enabled():  # 再上傳物件儲存，讓任何 replica 都下載得到（取代依賴本地磁碟）
-        _s3_client().put_object(Bucket=os.getenv("S3_BUCKET"), Key=_S3_UPLOAD_PREFIX + safe, Body=data)
+    if _s3_enabled():  # 再上傳物件儲存（每租戶子前綴），讓任何 replica 都下載得到
+        _s3_client().put_object(
+            Bucket=os.getenv("S3_BUCKET"), Key=f"{_S3_UPLOAD_PREFIX}{tenant}/{safe}", Body=data
+        )
     return {"text": result}
 
 
 @app.get("/api/rag/file/{name}")
-def get_rag_file(name: str):
+def get_rag_file(name: str, tenant: str = Depends(current_tenant)):
     """下載知識庫某個來源的原始檔（S3 模式從物件儲存，否則本地 uploads/）。"""
     safe = Path(name).name  # 擋目錄穿越
     if _s3_enabled():
         from botocore.exceptions import ClientError
 
         try:
-            obj = _s3_client().get_object(Bucket=os.getenv("S3_BUCKET"), Key=_S3_UPLOAD_PREFIX + safe)
+            obj = _s3_client().get_object(
+                Bucket=os.getenv("S3_BUCKET"), Key=f"{_S3_UPLOAD_PREFIX}{tenant}/{safe}"
+            )
         except ClientError:
             raise HTTPException(status_code=404, detail="原始檔不存在（可能是貼上內容或資料夾同步來源）。")
         headers = {"Content-Disposition": f'attachment; filename="{safe}"'}
