@@ -9,16 +9,23 @@
 - 回傳一律是「給 LLM 閱讀的字串」（表格化結果或友善錯誤說明），不丟例外。
 """
 
+import logging
 import os
 import re
 
-import psycopg
 from dotenv import load_dotenv
+from psycopg_pool import ConnectionPool
 
 load_dotenv()
 
+# 連線失敗時呼叫端已回友善字串，連線池自己那層重複的 warning 就壓掉，dev 輸出乾淨。
+logging.getLogger("psycopg.pool").setLevel(logging.ERROR)
+
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://erp@localhost:5433/erp")
 MAX_ROWS = 100  # 回給 LLM 的最大列數，避免一次塞爆 context
+
+# 連線即套用的唯讀＋逾時防護（伺服器端防線；應用層 _validate 是第一道）。
+_CONN_OPTIONS = "-c default_transaction_read_only=on -c statement_timeout=5000"
 
 # 全資料庫 schema 概覽已移到 tools/sql_schema.py（單一結構化來源 sql_library/schema.json）。
 # 需要完整總覽：from tools.sql_schema import SCHEMA_OVERVIEW；需要檢索相關表：用 find_tables。
@@ -31,12 +38,29 @@ _FORBIDDEN = re.compile(
 )
 
 
+_pool = None
+
+
+def _get_pool():
+    """惰性建立共用連線池（白皮書 §25 P1-3）。多 replica 併發下，每查詢新開連線會撞
+    Postgres 連線上限；連線池複用連線、有上限。DB 還沒起來時 pool 建得起來、之後會自動
+    恢復（不像 checkpointer 快取失敗——DB 常是手動 start，要能自癒）。"""
+    global _pool
+    if _pool is None:
+        _pool = ConnectionPool(
+            conninfo=DATABASE_URL,
+            min_size=0,  # 不維持常駐閒置連線：DB 沒起來時不會在背景一直重連噴 log
+            max_size=int(os.getenv("DB_POOL_MAX", "10")),
+            timeout=5,  # 取不到連線時最多等 5 秒就拋（避免卡住，由呼叫端回友善字串）
+            kwargs={"options": _CONN_OPTIONS, "connect_timeout": 3},
+            open=True,
+        )
+    return _pool
+
+
 def _get_conn():
-    """取得唯讀、有逾時保護的連線。"""
-    return psycopg.connect(
-        DATABASE_URL,
-        options="-c default_transaction_read_only=on -c statement_timeout=5000",
-    )
+    """從連線池借一個唯讀、有逾時保護的連線（用 with 包住，離開時自動歸還而非關閉）。"""
+    return _get_pool().connection()
 
 
 def _validate(query: str) -> str | None:
