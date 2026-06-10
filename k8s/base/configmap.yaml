@@ -17,6 +17,9 @@ data:
   LLM_TEMPERATURE: "0"
   OPENAI_MAX_RETRIES: "2"          # 撞 rate limit 自動重試（指數退避）
   API_MAX_CONCURRENCY: "8"         # 同時在途 LLM 請求上限（背壓，§25 P1-4），超量回 429
+  # 登入/多租戶（白皮書 P2）：設了 GOOGLE_CLIENT_ID 就啟用 Google 登入+每使用者隔離；
+  # 空＝單人模式。Client ID 非機密放這；簽章密鑰 APP_JWT_SECRET 放 agent-secrets。
+  GOOGLE_CLIENT_ID: ""
   # 模型分級（選填，§25 P1-7）：不設則全用 OPENAI_MODEL。要分級就取消註解：
   # OPENAI_MODEL_FAST: "gpt-4o-mini"     # supervisor 路由
   # OPENAI_MODEL_STRONG: "gpt-4o"        # analyst 決策分析

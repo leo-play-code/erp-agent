@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import Nav from "./components/Nav";
+import AuthGate from "./components/AuthGate";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -29,8 +30,10 @@ export default function RootLayout({
   return (
     <html lang="zh-Hant" className={`${inter.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col">
-        <Nav />
-        <main className="flex-1">{children}</main>
+        <AuthGate>
+          <Nav />
+          <main className="flex-1">{children}</main>
+        </AuthGate>
       </body>
     </html>
   );
