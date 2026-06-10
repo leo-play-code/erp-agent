@@ -53,6 +53,12 @@ metadata:
 spec:
   selector: { app: ppt-agent }
   ports: [ { port: 8000, targetPort: 8000 } ]
+  # ★ MCP-SSE 是有狀態的：GET /sse 拿 session_id、POST /messages/?session_id=X 必須回到同一個
+  # pod，否則 404。用 ClientIP 黏著把同一來源(erp-api)的 SSE+POST 釘在同一 replica。
+  # 註：單一 erp-api 來源 IP 會固定打到某一個 ppt replica（正確但不跨 replica 分散）；
+  # 要 SSE 跨 replica 真分流，需 §19 的 session 感知 LB（Traefik sticky by session）或改
+  # streamable-http transport —— 屬後續優化。
+  sessionAffinity: ClientIP
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler

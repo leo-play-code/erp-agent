@@ -209,6 +209,9 @@ grep -rnE "^\s*(import|from)\s+(langchain|langgraph|mcp|fastapi|fastmcp)" ../age
    in-process agent=函式呼叫,外部化 agent(MCP-backed)=MCP/HTTP 到該服務。LLM 呼叫是另一條 HTTPS。
 4. **外部化 agent 必須常駐 up**:連線是「連到正在跑的服務」;它沒起來,`load_*_tools()` 會優雅
    回空清單(erp 仍能起,但該 agent 暫無工具)。**in-process agent 不另跑容器**,隨 host 一起跑。
+   **MCP-SSE 是有狀態的**(GET `/sse` 拿 session_id、POST `/messages/?session_id=` 必須回同一 pod):
+   replica>1 時 Service 一定要 `sessionAffinity: ClientIP`,否則 round-robin 會 404 把 client 弄死
+   (見 `k8s/base/ppt-agent.yaml`)。要 SSE 真跨 replica 分流需 session 感知 LB,屬後續。
 5. **每容器 `requests`+`limits` + readiness/liveness 必設**(對應 `agent.yaml`,§16)。MCP-SSE 無
    HTTP 健康端點 → 用 `tcpSocket` 探針;REST adapter 有 `/healthz` 可 `httpGet`。
 6. **秘密放 Secret、設定放 ConfigMap**,env 注入,**勿烤進 image**(`.env`、金鑰都在 `.dockerignore`)。
