@@ -20,7 +20,7 @@ from langgraph.prebuilt import create_react_agent
 load_dotenv()
 
 
-def get_llm():
+def get_llm(tier: str = "default"):
     """建立並回傳 LLM 實例。
 
     *** 換模型只需改這裡 ***
@@ -28,11 +28,24 @@ def get_llm():
         from langchain_ollama import ChatOllama
         return ChatOllama(model="llama3.1", temperature=0)
     其餘 Agent 程式碼都不需要更動。
+
+    模型分級（白皮書 §25 P1-7，省成本/擋速率）：用 tier 區分任務難度——
+    - "default"：一般任務，用 OPENAI_MODEL。
+    - "fast"   ：調度/簡單任務（如 supervisor 路由），用 OPENAI_MODEL_FAST（便宜/快）。
+    - "strong" ：難任務（如 analyst 決策分析），用 OPENAI_MODEL_STRONG（最強）。
+    fast/strong 的 env 沒設時都「回退到 OPENAI_MODEL」→ 不設就是現況、零行為變更。
+    max_retries 內建指數退避，撞 rate limit 時自動重試（次數可用 OPENAI_MAX_RETRIES 調）。
     """
+    default_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    model = {
+        "fast": os.getenv("OPENAI_MODEL_FAST", default_model),
+        "strong": os.getenv("OPENAI_MODEL_STRONG", default_model),
+    }.get(tier, default_model)
     return ChatOpenAI(
-        model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+        model=model,
         api_key=os.getenv("OPENAI_API_KEY"),
         temperature=float(os.getenv("LLM_TEMPERATURE", "0")),
+        max_retries=int(os.getenv("OPENAI_MAX_RETRIES", "2")),
     )
 
 
@@ -91,7 +104,7 @@ def get_checkpointer():
     return MemorySaver()
 
 
-def create_agent(tools, system_prompt, with_memory=True):
+def create_agent(tools, system_prompt, with_memory=True, tier="default"):
     """所有 Agent 的統一建立入口。
 
     Args:
@@ -102,12 +115,13 @@ def create_agent(tools, system_prompt, with_memory=True):
               （Postgres 或 RAM）；用 thread_id 區隔不同對話。
             - False：要把這個 Agent 當成節點接進更大的 LangGraph 流程時用，
               記憶交由「父層流程」統一管理，避免兩層 checkpointer 互相打架。
+        tier: LLM 分級（見 get_llm）。難任務的 Agent 傳 "strong"，預設 "default"。
 
     Returns:
         一個可直接 invoke、也可接入 LangGraph 的 agent graph。
     """
     return create_react_agent(
-        model=get_llm(),
+        model=get_llm(tier),
         tools=tools,
         prompt=system_prompt,
         checkpointer=get_checkpointer() if with_memory else None,
