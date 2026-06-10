@@ -10,13 +10,14 @@
     POST /api/chat/stream  同上，但邊跑邊串流：每派一個 Agent、每段產出即時回傳（對話頁）
 """
 
+import asyncio
 import functools
 import json
 import os
 import tempfile
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage
@@ -36,6 +37,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 應用層併發背壓（白皮書 §25 P1-4）：限制「同時在途的 LLM 驅動請求」數量，超量直接回
+# 429「稍後再試」，避免暴量時無限開工把容器記憶體打到 OOM、或一起變慢拖垮整機。
+# 只擋貴的 LLM 端點（/api/chat、/api/chat/stream、/api/agent）；查狀態/下載等便宜端點不擋。
+# ppt-agent 那層另有 PPT_MAX_CONCURRENCY 擋它自己的 CPU 密集渲染，兩層各司其職。
+_API_MAX_CONCURRENCY = int(os.getenv("API_MAX_CONCURRENCY", "8"))
+_inflight = asyncio.Semaphore(_API_MAX_CONCURRENCY)
+
+
+async def _concurrency_slot():
+    """取一個在途名額；滿了就回 429。用 FastAPI 依賴注入，名額在請求（含串流）結束才釋放。"""
+    if _inflight.locked():  # 名額用罄（可用數 == 0）
+        raise HTTPException(status_code=429, detail="伺服器忙碌中，請稍後再試")
+    await _inflight.acquire()  # 此時必有名額、不會阻塞
+    try:
+        yield
+    finally:
+        _inflight.release()
+
 
 # 產生的檔案（例如 ppt agent 產出的簡報）放這裡，透過 /files/<檔名> 提供下載
 _GENERATED = Path(__file__).resolve().parent.parent / "generated"
@@ -192,6 +212,7 @@ async def run_agent(
     name: str = Form(...),
     message: str = Form(...),
     file: UploadFile | None = File(None),
+    _slot: None = Depends(_concurrency_slot),
 ):
     """執行單一指定的 Agent。"""
     if name not in AGENTS:
@@ -207,6 +228,7 @@ async def chat(
     message: str = Form(...),
     session_id: str = Form(...),
     file: UploadFile | None = File(None),
+    _slot: None = Depends(_concurrency_slot),
 ):
     """執行 supervisor 流程，回傳整段多 Agent 協作對話（依 session_id 保留記憶）。"""
     config = {"configurable": {"thread_id": session_id}}
@@ -226,6 +248,7 @@ async def chat_stream(
     session_id: str = Form(...),
     file: UploadFile | None = File(None),
     history: str | None = Form(None),
+    _slot: None = Depends(_concurrency_slot),
 ):
     """串流版 supervisor 流程：邊跑邊回傳，讓前端即時顯示「派了哪個 Agent、產出什麼」。
 
