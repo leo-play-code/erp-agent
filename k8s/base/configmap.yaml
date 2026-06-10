@@ -6,6 +6,9 @@ metadata:
 data:
   # erp-api 連叢集內的固定入口（Service 名，不是 localhost）
   DATABASE_URL: "postgresql://erp@postgres:5432/erp"
+  # 對話記憶持久化到 Postgres（不在 RAM）→ erp-api 可安全開多 replica，
+  # round-robin 到任何 pod 都接得到同一條對話（記憶是無狀態 HTTP 的前提）。
+  CHECKPOINT_DATABASE_URL: "postgresql://erp@postgres:5432/erp"
   PPT_AGENT_TRANSPORT: "sse"
   PPT_AGENT_URL: "http://ppt-agent:8000/sse"   # ← Service 名固定入口；Pod 擴縮 erp-api 不用改
   USE_PRESENTON_PPT: "false"

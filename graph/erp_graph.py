@@ -6,8 +6,8 @@
 - supervisor：看完整對話進度，決定「下一步交給哪個 Agent」或「FINISH 結束」。
   因此一個請求可以串接多個 Agent（例：先 pdf 分析、再 inventory 查庫存）。
 - 各 Agent 節點：執行後把產出（標記該 Agent 名稱）寫回 messages，再回到 supervisor。
-- 記憶體由「這個流程」用一個 MemorySaver 統一管理；子 Agent 都以
-  with_memory=False 建立，避免兩層 checkpointer 衝突。
+- 記憶體由「這個流程」用一個 checkpointer 統一管理（後端見 base_agent.get_checkpointer()：
+  Postgres 持久化或 RAM 退路）；子 Agent 都以 with_memory=False 建立，避免兩層衝突。
 
 ★ 整張圖完全由 graph/registry.py 的 AGENTS 字典驅動 ★
   supervisor 選項、提示詞、節點、邊都從 AGENTS 自動生成。加新 Agent 改 registry 即可。
@@ -16,11 +16,10 @@
 from typing import Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
 from pydantic import BaseModel, Field, create_model
 
-from agents.base_agent import get_llm
+from agents.base_agent import get_checkpointer, get_llm
 from graph.registry import AGENTS
 
 # 子 Agent：接入流程，記憶交給父層，所以 with_memory=False
@@ -164,8 +163,8 @@ def _build_graph():
             name, _after_agent, {"wait_user": END, "supervisor": "supervisor"}
         )
 
-    # 整個流程的記憶體統一在這裡管理
-    return builder.compile(checkpointer=MemorySaver())
+    # 整個流程的記憶體統一在這裡管理（Postgres 或 RAM，由 get_checkpointer() 決定）
+    return builder.compile(checkpointer=get_checkpointer())
 
 
 erp_graph = _build_graph()
