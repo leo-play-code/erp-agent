@@ -46,7 +46,7 @@ if [ "${USE_PRESENTON_PPT:-false}" != "true" ]; then
   if command -v docker >/dev/null 2>&1 && [ -f "$PPT_AGENT_DIR/docker-compose.yml" ]; then
     echo "  · 啟動 ppt-agent 容器（獨立服務，首次會 build，請稍候）…"
     if ( cd "$PPT_AGENT_DIR" && PPT_AGENT_PORT="$PPT_AGENT_PORT" PPT_OUTPUTS_DIR="$ROOT/generated" \
-         docker compose up -d >/dev/null 2>&1 ); then
+         PPT_UID="$(id -u)" PPT_GID="$(id -g)" docker compose up -d >/dev/null 2>&1 ); then
       export PPT_AGENT_TRANSPORT=sse
       export PPT_AGENT_URL="http://127.0.0.1:${PPT_AGENT_PORT}/sse"
       echo "  ✓ ppt-agent 容器啟動 (sse :$PPT_AGENT_PORT)"
