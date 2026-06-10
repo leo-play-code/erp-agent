@@ -23,7 +23,7 @@ erp-api 永遠連 **Service 名固定入口**（`http://ppt-agent:8000/sse`、`p
 ```bash
 docker build -t erp-api:0.1.0 -f Dockerfile .
 docker build -t erp-frontend:0.1.0 -f frontend/Dockerfile frontend
-docker build -t ppt-agent:0.1.0 ../agents/ppt-agent
+docker build -t ppt-workflow:0.1.0 ../agents/ppt-workflow
 docker images | grep 0.1.0          # 應看到三個
 ```
 
@@ -131,7 +131,7 @@ kubectl -n agents rollout restart deploy/erp-api
 
 ### 改 image 後重來（imagePullPolicy: Never，k3s 只認已匯入的本地 image）
 ```bash
-docker build -t erp-api:0.1.0 -f Dockerfile .          # 1) 重 build（或前端/ppt-agent）
+docker build -t erp-api:0.1.0 -f Dockerfile .          # 1) 重 build（或前端/ppt-workflow）
 bash k8s/import-images.sh                                # 2) 重匯進 k3s（sudo）
 kubectl -n agents rollout restart deploy/erp-api         # 3) 重啟用新 image
 ```

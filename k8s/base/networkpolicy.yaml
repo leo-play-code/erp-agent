@@ -1,31 +1,36 @@
-# NetworkPolicy —— 落實白皮書 §9「隔離」與 agent.yaml 宣告的 egress: none。
+# NetworkPolicy —— 落實白皮書 §9「隔離」：把 ppt-workflow 的出向收斂到「只開必要的幾條」。
 # k3s 內建 NetworkPolicy 控制器（kube-router）會強制執行這些規則。
 #
-# 範圍說明（為何只鎖 ppt-agent egress）：
-#   - ppt-agent 是【外部化的能力單元】，本身不呼叫 LLM、不該連公網——agent.yaml 宣告
-#     egress: none。這裡把它的出向限縮到「只准 DNS + 上傳 minio」，其餘（含公網）全擋，
-#     正是該宣告的落實，也是把不可信/外部化計算面收斂的高價值一步。
-#   - 只設 policyTypes: Egress：不影響入向流量，所以 kubelet 的健康探針（來源是節點 IP、
-#     非 Pod，常見會被入向 NetworkPolicy 誤擋造成 CrashLoop）與 erp-api 的 SSE 連線都不受影響。
-#   - erp-api 需要連公網（LLM / LangSmith），故【不】鎖它的 egress；白皮書 egress: none 的主張
-#     本就專指 ppt-agent。入向 default-deny 與 Traefik 選擇器需在叢集實測才安全，列為後續。
+# 範圍說明（為何鎖 ppt-workflow egress、開哪幾條）：
+#   - ppt-workflow 是【外部化的能力單元】。它需要：DNS、上傳 minio、以及 AI 模式呼叫
+#     Anthropic API（api.anthropic.com:443）。除這三類外的出向（含其他公網）一律擋掉，
+#     把外部化計算面收斂到最小，是高價值的縱深防禦。
+#   - HTTPS(443) 對外無法用 podSelector 限定（Anthropic 是動態 CDN IP），故放行 443 到任意位址；
+#     其餘埠/協定仍全擋。這是「可信 agent 對外只走 LLM HTTPS」的合理折衷。
+#   - 只設 policyTypes: Egress：不影響入向，所以 kubelet 健康探針（來源是節點 IP、非 Pod，
+#     常被入向 NetworkPolicy 誤擋成 CrashLoop）與 erp-api 的 SSE 連線都不受影響。
+#   - erp-api 需連公網（LLM / LangSmith），故【不】鎖它的 egress。入向 default-deny 與
+#     Traefik 選擇器需在叢集實測才安全，列為後續。
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: ppt-agent-egress
-  labels: { app: ppt-agent }
+  name: ppt-workflow-egress
+  labels: { app: ppt-workflow }
 spec:
   podSelector:
-    matchLabels: { app: ppt-agent }
+    matchLabels: { app: ppt-workflow }
   policyTypes: [Egress]
   egress:
-    # ① DNS：解析 minio Service 名需要（kube-dns 在 kube-system，用純 ports 規則放行 53）。
+    # ① DNS：解析 Service 名與 api.anthropic.com 需要（kube-dns 在 kube-system，放行 53）。
     - ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
-    # ② 物件儲存：產物上傳的唯一合法去處（同 namespace 的 minio:9000）。其餘出向一律拒絕。
+    # ② 物件儲存：產物上傳的去處（同 namespace 的 minio:9000）。
     - to:
         - podSelector:
             matchLabels: { app: minio }
       ports:
         - { protocol: TCP, port: 9000 }
+    # ③ AI 渲染：對外 HTTPS(443) 呼叫 Anthropic API。無法用 podSelector 鎖公網 IP，放行 443。
+    - ports:
+        - { protocol: TCP, port: 443 }

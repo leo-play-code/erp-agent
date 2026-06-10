@@ -55,7 +55,7 @@ AGENTS = {
         "accepts_file": False,
     },
     "ppt": {
-        "desc": "製作 PowerPoint 簡報，依主題或大綱產出可下載的 .pptx",
+        "desc": "製作 PowerPoint 簡報：依主題/素材由 AI 為主題量身設計版型，產出可下載的 .pptx",
         "build": build_ppt_agent,
         "accepts_file": False,
     },

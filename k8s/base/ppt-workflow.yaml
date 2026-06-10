@@ -1,34 +1,34 @@
-# ppt-agent —— 外部化的可攜式簡報服務（image 由 ../agents/ppt-agent 建）。
-# erp-api 經 Service 名 http://ppt-agent:8000/sse 連它（固定入口）。
+# ppt-workflow —— 外部化的可攜式簡報服務（AI 動態設計 + 確定性後盾；image 由 ../agents/ppt-workflow 建）。
+# erp-api 經 Service 名 http://ppt-workflow:8000/sse 連它（固定入口）。取代舊的 ppt-agent。
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ppt-agent
-  labels: { app: ppt-agent }
+  name: ppt-workflow
+  labels: { app: ppt-workflow }
 spec:
   replicas: 1                      # min=1 常駐；尖峰由 HPA 擴到 max
   selector:
-    matchLabels: { app: ppt-agent }
+    matchLabels: { app: ppt-workflow }
   template:
     metadata:
-      labels: { app: ppt-agent }
+      labels: { app: ppt-workflow }
     spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
         fsGroup: 1000
-      # 根檔系統唯讀，只開一個 emptyDir 給 /tmp（S3 模式渲染暫存寫這裡，上傳後刪）。
-      # 與 ppt-agent 自己的 docker-compose.yml（read_only:true + tmpfs:/tmp）等價，已驗證可跑。
+      # 根檔系統唯讀，只開 emptyDir 給 /tmp（AI 沙箱跑程式 + S3 模式產出暫存都寫這，用完刪）。
       volumes:
         - name: tmp
           emptyDir: {}
       containers:
-        - name: ppt-agent
-          image: ppt-agent:0.1.0
+        - name: ppt-workflow
+          image: ppt-workflow:0.1.0
           imagePullPolicy: Never   # 本地 image 已匯進 k3s containerd，不對外拉
           ports: [ { containerPort: 8000 } ]
-          # 安全硬化（白皮書 §9）：唯讀根檔、禁提權、丟掉所有 capability、套預設 seccomp。
-          # 不可信執行（codegen）才需 gVisor/Firecracker；此處是可信無狀態 agent 的縱深防禦。
+          # 安全硬化（白皮書 §9）：唯讀根檔、禁提權、丟所有 capability、套預設 seccomp。
+          # AI 現寫的 python-pptx 程式只在引擎的白名單沙箱(子行程)跑、限 pptx/math/random 等，
+          # 不可 os/subprocess/網路；container 再加這層縱深防禦。
           securityContext:
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
@@ -44,17 +44,19 @@ spec:
             - { name: MCP_PORT,             value: "8000" }
             - { name: PUBLIC_FILES_PREFIX,  value: "/files" }
             - { name: PPT_MAX_CONCURRENCY,  value: "2" }
+            # AI 動態設計：PPT_USE_AI=true 且有金鑰才開，否則自動退回確定性（仍保證出檔）。
+            - { name: PPT_USE_AI,      valueFrom: { configMapKeyRef: { name: agent-config,  key: PPT_USE_AI,          optional: true } } }
+            - { name: ANTHROPIC_API_KEY, valueFrom: { secretKeyRef:  { name: agent-secrets, key: ANTHROPIC_API_KEY,   optional: true } } }
             # 產物上傳物件儲存（與 erp-api 共用同一 bucket，取代共享 PVC → 可跨節點）。
-            # optional=true：未設 S3 金鑰時（disk-mode 回滾）Pod 仍能啟動，渲染回寫本地。
             - { name: S3_ENDPOINT_URL, valueFrom: { configMapKeyRef: { name: agent-config,  key: S3_ENDPOINT_URL, optional: true } } }
             - { name: S3_BUCKET,       valueFrom: { configMapKeyRef: { name: agent-config,  key: S3_BUCKET,       optional: true } } }
             - { name: S3_ACCESS_KEY,   valueFrom: { secretKeyRef:    { name: agent-secrets, key: S3_ACCESS_KEY,   optional: true } } }
             - { name: S3_SECRET_KEY,   valueFrom: { secretKeyRef:    { name: agent-secrets, key: S3_SECRET_KEY,   optional: true } } }
-          resources:               # 對應 agent.yaml（§16）
-            requests: { cpu: "250m", memory: "256Mi" }
-            limits:   { cpu: "750m", memory: "512Mi" }
-          readinessProbe:          # /healthz（§25 P0-3）：HTTP 層能回 200 才算就緒，
-            httpGet: { path: /healthz, port: 8000 }   # 比 tcpSocket 準，新 Pod 就緒前不收流量
+          resources:               # AI 渲染較重（呼叫 Claude + 子行程跑程式）
+            requests: { cpu: "250m", memory: "384Mi" }
+            limits:   { cpu: "1",    memory: "1Gi" }
+          readinessProbe:          # /healthz（§25 P0-3）：HTTP 層能回 200 才算就緒
+            httpGet: { path: /healthz, port: 8000 }
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
@@ -65,23 +67,20 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: ppt-agent          # ← erp-api 連這個固定名稱；Pod 擴縮自動分流
+  name: ppt-workflow       # ← erp-api 連這個固定名稱（PPT_AGENT_URL）；Pod 擴縮自動分流
 spec:
-  selector: { app: ppt-agent }
+  selector: { app: ppt-workflow }
   ports: [ { port: 8000, targetPort: 8000 } ]
-  # ★ MCP-SSE 是有狀態的：GET /sse 拿 session_id、POST /messages/?session_id=X 必須回到同一個
-  # pod，否則 404。用 ClientIP 黏著把同一來源(erp-api)的 SSE+POST 釘在同一 replica。
-  # 註：單一 erp-api 來源 IP 會固定打到某一個 ppt replica（正確但不跨 replica 分散）；
-  # 要 SSE 跨 replica 真分流，需 §19 的 session 感知 LB（Traefik sticky by session）或改
-  # streamable-http transport —— 屬後續優化。
+  # MCP-SSE 有狀態：GET /sse 拿 session_id、POST /messages/?session_id=X 必須回同一 pod，
+  # 否則 404。用 ClientIP 黏著把同一來源(erp-api)的 SSE+POST 釘在同一 replica。
   sessionAffinity: ClientIP
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: ppt-agent
+  name: ppt-workflow
 spec:
-  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: ppt-agent }
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: ppt-workflow }
   minReplicas: 1
   maxReplicas: 4
   metrics:

@@ -34,29 +34,31 @@ else
   if [ -d pgdata ]; then bash db/pg.sh start; else bash db/pg.sh init; fi
 fi
 
-# 1.5) 簡報引擎 ppt-agent（預設 ppt 引擎，python-pptx）：它是【獨立部署的 sibling 服務】
-#      (預設 ../agents/ppt-agent，有自己的 docker-compose.yml)。erp-agent 只用 URL(MCP/sse)連它。
-#      優先用它自己的 docker 容器；無 docker 則退回 stdio（本機 spawn，需 ppt-agent/.venv）。
+# 1.5) 簡報引擎 ppt-workflow（預設 ppt 引擎，AI 動態設計 + 確定性後盾）：獨立部署的 sibling 服務
+#      (預設 ../agents/ppt-workflow，有自己的 docker-compose.yml)。erp-agent 只用 URL(MCP/sse)連它。
+#      優先用它自己的 docker 容器；無 docker 則退回 stdio（本機 spawn，需其 .venv）。
 #      產出寫到 ./generated（= api 的 /files）。USE_PRESENTON_PPT=true 時才略過、改走舊 Presenton。
+#      AI 模式：.env 設 PPT_USE_AI=true + ANTHROPIC_API_KEY 才開（沒金鑰自動退回確定性）。
 export OUTPUTS_DIR="$ROOT/generated"
 PPT_AGENT_PORT="${PPT_AGENT_PORT:-8002}"
-PPT_AGENT_DIR="${PPT_AGENT_DIR:-$ROOT/../agents/ppt-agent}"
+PPT_AGENT_DIR="${PPT_AGENT_DIR:-$ROOT/../agents/ppt-workflow}"
 export PPT_AGENT_DIR
 if [ "${USE_PRESENTON_PPT:-false}" != "true" ]; then
   if command -v docker >/dev/null 2>&1 && [ -f "$PPT_AGENT_DIR/docker-compose.yml" ]; then
-    echo "  · 啟動 ppt-agent 容器（獨立服務，首次會 build，請稍候）…"
+    echo "  · 啟動 ppt-workflow 容器（獨立服務，首次會 build，請稍候）…"
     if ( cd "$PPT_AGENT_DIR" && PPT_AGENT_PORT="$PPT_AGENT_PORT" PPT_OUTPUTS_DIR="$ROOT/generated" \
+         PPT_USE_AI="${PPT_USE_AI:-false}" ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
          PPT_UID="$(id -u)" PPT_GID="$(id -g)" docker compose up -d >/dev/null 2>&1 ); then
       export PPT_AGENT_TRANSPORT=sse
       export PPT_AGENT_URL="http://127.0.0.1:${PPT_AGENT_PORT}/sse"
-      echo "  ✓ ppt-agent 容器啟動 (sse :$PPT_AGENT_PORT)"
+      echo "  ✓ ppt-workflow 容器啟動 (sse :$PPT_AGENT_PORT)"
     else
       export PPT_AGENT_TRANSPORT=stdio
-      echo "  · ppt-agent 容器啟動失敗，改用 stdio（需 $PPT_AGENT_DIR/.venv）"
+      echo "  · ppt-workflow 容器啟動失敗，改用 stdio（需 $PPT_AGENT_DIR/.venv）"
     fi
   else
     export PPT_AGENT_TRANSPORT=stdio
-    echo "  · 無 Docker/找不到 ppt-agent compose：改用 stdio（需 $PPT_AGENT_DIR/.venv）"
+    echo "  · 無 Docker/找不到 ppt-workflow compose：改用 stdio（需 $PPT_AGENT_DIR/.venv）"
   fi
 fi
 

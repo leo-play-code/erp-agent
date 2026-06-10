@@ -13,10 +13,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# 非 root；產出目錄會被 PVC 掛在 /app/generated（api 的 /files 由此服務）。
+# 非 root（uid 1000）。app 執行期會在 /app 下寫多個目錄：generated（產物，S3 模式不寫）、
+# uploads（RAG 原始檔）、sql_imports（excel 匯入暫存）、rag_index（知識庫索引）、
+# sql_library/schema_imports.json（匯入的 schema）。/app 只有程式碼+資料、無 venv（套件在
+# /usr/local），整個 chown 給 1000 最穩、不會漏目錄；rootfs 未開唯讀，可寫。
 RUN useradd -u 1000 -m appuser \
-    && mkdir -p /app/generated /app/uploads \
-    && chown -R 1000:1000 /app/generated /app/uploads
+    && mkdir -p /app/generated /app/uploads /app/sql_imports /app/rag_index \
+    && chown -R 1000:1000 /app
 USER 1000:1000
 
 EXPOSE 8000

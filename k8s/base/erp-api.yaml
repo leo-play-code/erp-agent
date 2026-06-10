@@ -27,7 +27,7 @@ spec:
           args:
             - |
               import socket, time
-              for host, port in [("postgres", 5432), ("ppt-agent", 8000)]:
+              for host, port in [("postgres", 5432), ("ppt-workflow", 8000)]:
                   while True:
                       try:
                           socket.create_connection((host, port), 2); break
