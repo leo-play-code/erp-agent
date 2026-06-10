@@ -1,0 +1,66 @@
+# MinIO —— 物件儲存，產物交付的單一來源（白皮書 §25 P0-2）。
+# ppt-agent 上傳 .pptx、erp-api 的 /files 從這裡串流下載 → 兩者不再共用磁碟，
+# 改用網路存取同一個 bucket，所以 Pod 可跨節點分佈（取代 outputs-pvc 的 RWO 同節點限制）。
+# PVC 只掛在 MinIO 自己身上（單一掛載者，RWO 即可）；其他服務都走 Service 名 minio:9000。
+# 雲端可直接改連 AWS S3：把 S3_ENDPOINT_URL 指向 S3、本檔可整個移除（程式不動）。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  labels: { app: minio }
+spec:
+  replicas: 1                      # 物件儲存有狀態，單 replica；要 HA 用分散式 MinIO（後續）
+  strategy: { type: Recreate }     # RWO PVC 不能兩個 Pod 同掛，滾動更新會卡住 → 用 Recreate
+  selector:
+    matchLabels: { app: minio }
+  template:
+    metadata:
+      labels: { app: minio }
+    spec:
+      containers:
+        - name: minio
+          image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+          args: ["server", "/data", "--console-address", ":9001"]
+          ports:
+            - { containerPort: 9000, name: api }
+            - { containerPort: 9001, name: console }
+          env:
+            - { name: MINIO_ROOT_USER,     valueFrom: { secretKeyRef: { name: agent-secrets, key: S3_ACCESS_KEY } } }
+            - { name: MINIO_ROOT_PASSWORD, valueFrom: { secretKeyRef: { name: agent-secrets, key: S3_SECRET_KEY } } }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+          readinessProbe:
+            httpGet: { path: /minio/health/ready, port: 9000 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /minio/health/live, port: 9000 }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits:   { cpu: "500m", memory: "512Mi" }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: minio-pvc }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-pvc
+spec:
+  accessModes: ["ReadWriteOnce"]   # 只有 MinIO 掛它，RWO 足夠（跨節點存取走 MinIO 的網路 API）
+  resources:
+    requests:
+      storage: 10Gi
+  # storageClassName: 雲端換成對應 SC；k3s 預設 local-path 可省略
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio                      # ← erp-api / ppt-agent 連這個固定名稱：S3_ENDPOINT_URL=http://minio:9000
+spec:
+  selector: { app: minio }
+  ports:
+    - { port: 9000, targetPort: 9000, name: api }
+    - { port: 9001, targetPort: 9001, name: console }

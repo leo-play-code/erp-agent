@@ -9,7 +9,7 @@ resources:
   - configmap.yaml
   # secret 不入 kustomize：避免 apply -k 把真金鑰蓋回 REPLACE_ME。
   # 改由 runbook 用 kubectl create secret 手動建（見 k8s/README.md）。
-  - outputs-pvc.yaml
+  - minio.yaml          # 物件儲存：產物交付來源（取代 outputs-pvc，可跨節點）
   - postgres.yaml
   - ppt-agent.yaml
   - erp-api.yaml
