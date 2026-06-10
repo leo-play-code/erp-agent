@@ -239,18 +239,23 @@ grep -rnE "^\s*(import|from)\s+(langchain|langgraph|mcp|fastapi|fastmcp)" ../age
 
 ## 記憶體規則(重要,容易踩雷)
 
-記憶體 = LangGraph 的 **checkpointer**(目前用 `MemorySaver`)。本質:
-**存在 RAM、依 `thread_id` 區分的「對話歷史」,存活範圍是程式行程的生命週期 —— 程式關掉就消失,並非永久。**
+記憶體 = LangGraph 的 **checkpointer**,依 `thread_id` 區分的「對話歷史」。
+**後端只在 `base_agent.py` 的 `get_checkpointer()` 一處決定**(與 `get_llm()` 對稱,換後端只改這裡):
+
+- **設了 `CHECKPOINT_DATABASE_URL`(或退用 `DATABASE_URL`)且連得上 Postgres → `PostgresSaver` 持久化**:
+  記憶不在 RAM,erp-agent 才能開**多 replica**(任何 replica 都接得到同一條對話)、程式重啟記憶還在。
+  checkpoint 表(`checkpoints`/`checkpoint_writes` 等)建在 URL 指向的 DB,用「可寫」連線,與
+  sql_tools 對 ERP 的唯讀連線獨立、表名不衝突。要記憶/業務分庫,把 URL 指向另一個 database 即可。
+- **連不上 / 沒設 → 優雅退回 `MemorySaver`(RAM、程式關掉即消失)**:服務沒起來時 erp 仍能 import、
+  驗證仍過,只是記憶不持久、不能橫向擴。
 
 | 場景 | 怎麼做 | 記憶由誰管 |
 |---|---|---|
-| 單獨跑某個 Agent | `build_xxx_agent()`(預設 `with_memory=True`) | Agent 自己,**每個 Agent 各自一個 MemorySaver** |
-| 接進 graph 當節點 | `build_xxx_agent(with_memory=False)` | **graph 那層的單一 MemorySaver** |
+| 單獨跑某個 Agent | `build_xxx_agent()`(預設 `with_memory=True`) | Agent 自己,後端由 `get_checkpointer()` 決定 |
+| 接進 graph 當節點 | `build_xxx_agent(with_memory=False)` | **graph 那層的單一 checkpointer**(同上來源) |
 
 - 呼叫時要帶 `config={"configurable": {"thread_id": "<對話ID>"}}`;同 ID = 同一條對話。
 - **絕不**讓接進 graph 的子 Agent 自帶記憶(會和 graph 那層的 checkpointer 打架)。
-- 要「永久記憶」(重開程式還在):把 `base_agent.py` / `erp_graph.py` 的 `MemorySaver()`
-  換成 `SqliteSaver` 或 `PostgresSaver` 即可,其餘不動。
 
 ---
 
@@ -303,7 +308,8 @@ venv/bin/python -m agents.inventory_agent # 單獨跑某個 Agent
 - `supervisor` 每輪都會多一次 LLM 呼叫(調度用);串接 N 個 Agent 約 N+1 次調度呼叫,屬正常成本。
 - supervisor 是回圈,理論上可能無限循環。靠提示詞(完成即 FINISH)+ LangGraph 預設
   `recursion_limit`(25)收斂;若流程很長可在 `.invoke(..., {"recursion_limit": N})` 調高。
-- `MemorySaver` 是 RAM、非永久(見「記憶體規則」的升級方式)。
+- 記憶後端:連得上 Postgres 時用 `PostgresSaver` 持久化(可多 replica),否則退回 RAM 的
+  `MemorySaver`(見「記憶體規則」)。
 - SQL 範例庫 / schema 檢索目前是「單一資料庫」。要支援**多個 database**:在
   `catalog.json` / `schema.json` 各筆標註所屬 `db`,並加一層連線路由(先選 DB 再選表/SQL);
   資料量很大時 `_semantic_index` 可換成真正的向量資料庫(呼叫端介面不變)。
