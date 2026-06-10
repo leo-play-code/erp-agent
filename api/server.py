@@ -27,7 +27,9 @@ from api.auth import (
     GOOGLE_CLIENT_ID,
     current_tenant,
     current_tenant_var,
+    current_user,
     issue_app_jwt,
+    user_id_of,
     verify_google_id_token,
 )
 from graph.erp_graph import ASK_MARKER, erp_graph
@@ -289,9 +291,11 @@ async def chat(
     file: UploadFile | None = File(None),
     _slot: None = Depends(_concurrency_slot),
     tenant: str = Depends(current_tenant),
+    user: dict | None = Depends(current_user),
 ):
     """執行 supervisor 流程，回傳整段多 Agent 協作對話（依 session_id 保留記憶）。"""
-    config = {"configurable": {"thread_id": f"{tenant}:{session_id}"}}
+    # 對話是「個人層」：thread_id 含公司(org)＋個人(user)＋session，員工各自的對話互不干擾。
+    config = {"configurable": {"thread_id": f"{tenant}:{user_id_of(user)}:{session_id}"}}
     result = erp_graph.invoke(
         {"messages": [("user", _compose(message, file))]}, config
     )
@@ -310,6 +314,7 @@ async def chat_stream(
     history: str | None = Form(None),
     _slot: None = Depends(_concurrency_slot),
     tenant: str = Depends(current_tenant),
+    user: dict | None = Depends(current_user),
 ):
     """串流版 supervisor 流程：邊跑邊回傳，讓前端即時顯示「派了哪個 Agent、產出什麼」。
 
@@ -320,7 +325,7 @@ async def chat_stream(
         {"type":"error","detail":"..."}          發生錯誤
     """
     text = _compose(message, file)  # 需在請求生命週期內讀取上傳檔，故先組好
-    config = {"configurable": {"thread_id": f"{tenant}:{session_id}"}}
+    config = {"configurable": {"thread_id": f"{tenant}:{user_id_of(user)}:{session_id}"}}
     # 編輯/重跑分支會帶 history：用新的 session_id + 把先前對話當種子，避免與舊記憶衝突。
     # 一般接續對話不帶 history，靠 session_id 的既有記憶即可。
     seed = _seed_from_history(history) + [HumanMessage(content=text)]
