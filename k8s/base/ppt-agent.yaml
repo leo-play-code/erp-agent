@@ -17,11 +17,27 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
         fsGroup: 1000
+      # 根檔系統唯讀，只開一個 emptyDir 給 /tmp（S3 模式渲染暫存寫這裡，上傳後刪）。
+      # 與 ppt-agent 自己的 docker-compose.yml（read_only:true + tmpfs:/tmp）等價，已驗證可跑。
+      volumes:
+        - name: tmp
+          emptyDir: {}
       containers:
         - name: ppt-agent
           image: ppt-agent:0.1.0
           imagePullPolicy: Never   # 本地 image 已匯進 k3s containerd，不對外拉
           ports: [ { containerPort: 8000 } ]
+          # 安全硬化（白皮書 §9）：唯讀根檔、禁提權、丟掉所有 capability、套預設 seccomp。
+          # 不可信執行（codegen）才需 gVisor/Firecracker；此處是可信無狀態 agent 的縱深防禦。
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
           env:
             - { name: MCP_TRANSPORT,        value: "sse" }
             - { name: MCP_HOST,             value: "0.0.0.0" }

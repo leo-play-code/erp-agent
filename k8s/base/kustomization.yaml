@@ -16,6 +16,7 @@ resources:
   - frontend.yaml
   - ingress.yaml
   - seed-job.yaml
+  - networkpolicy.yaml   # §9 隔離：限縮 ppt-agent 出向（egress: none → 只准 DNS + minio）
 
 # 影像 tag 集中管理（換版本只改這裡）
 images:
