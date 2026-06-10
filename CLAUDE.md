@@ -214,8 +214,9 @@ grep -rnE "^\s*(import|from)\s+(langchain|langgraph|mcp|fastapi|fastmcp)" ../age
    **MCP-SSE 是有狀態的**(GET `/sse` 拿 session_id、POST `/messages/?session_id=` 必須回同一 pod):
    replica>1 時 Service 一定要 `sessionAffinity: ClientIP`,否則 round-robin 會 404 把 client 弄死
    (見 `k8s/base/ppt-agent.yaml`)。要 SSE 真跨 replica 分流需 session 感知 LB,屬後續。
-5. **每容器 `requests`+`limits` + readiness/liveness 必設**(對應 `agent.yaml`,§16)。MCP-SSE 無
-   HTTP 健康端點 → 用 `tcpSocket` 探針;REST adapter 有 `/healthz` 可 `httpGet`。
+5. **每容器 `requests`+`limits` + readiness/liveness 必設**(對應 `agent.yaml`,§16)。健康探針一律
+   用 `httpGet /healthz`:ppt-agent 的 MCP-SSE 已用 FastMCP `custom_route` 補上 `/healthz`(§25 P0-3),
+   比 `tcpSocket` 準(HTTP 層能回 200 才算就緒)。新增 MCP-SSE agent 比照加 `/healthz`。
 6. **秘密放 Secret、設定放 ConfigMap**,env 注入,**勿烤進 image**(`.env`、金鑰都在 `.dockerignore`)。
 7. **產物交付走物件儲存(MinIO/S3)**:設了 `S3_ENDPOINT_URL`+`S3_BUCKET` → ppt-agent 上傳
    bucket、erp-api 的 `/files` 從同一 bucket **串流**下載,兩者改用網路存取、**不再共用磁碟**,

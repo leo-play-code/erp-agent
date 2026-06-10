@@ -37,12 +37,12 @@ spec:
           resources:               # 對應 agent.yaml（§16）
             requests: { cpu: "250m", memory: "256Mi" }
             limits:   { cpu: "750m", memory: "512Mi" }
-          readinessProbe:          # MCP-SSE 無 HTTP 健康端點 → tcpSocket
-            tcpSocket: { port: 8000 }
+          readinessProbe:          # /healthz（§25 P0-3）：HTTP 層能回 200 才算就緒，
+            httpGet: { path: /healthz, port: 8000 }   # 比 tcpSocket 準，新 Pod 就緒前不收流量
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
-            tcpSocket: { port: 8000 }
+            httpGet: { path: /healthz, port: 8000 }
             initialDelaySeconds: 15
             periodSeconds: 20
 ---
