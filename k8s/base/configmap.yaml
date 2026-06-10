@@ -18,6 +18,9 @@ data:
   # 模型分級（選填，§25 P1-7）：不設則全用 OPENAI_MODEL。要分級就取消註解：
   # OPENAI_MODEL_FAST: "gpt-4o-mini"     # supervisor 路由
   # OPENAI_MODEL_STRONG: "gpt-4o"        # analyst 決策分析
+  # 觀測 LangSmith tracing（§25 P1-9）：要開就設 true 並在 agent-secrets 放 LANGSMITH_API_KEY。
+  LANGSMITH_TRACING: "false"
+  LANGSMITH_PROJECT: "erp-agent"
   # 產物交付走物件儲存：ppt-agent 上傳、erp-api /files 串流，兩者不再共用磁碟（可跨節點）。
   # 連叢集內 MinIO 的固定入口；雲端可改指 AWS S3 端點。金鑰在 agent-secrets。
   S3_ENDPOINT_URL: "http://minio:9000"
