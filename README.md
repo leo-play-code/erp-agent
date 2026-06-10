@@ -115,11 +115,11 @@ venv/bin/python sql_library/validate.py   # 範例庫每條 SQL 實跑驗證
 - [x] PDF 分析、OCR、email 草稿、報表分析、庫存查詢
 
 **未來可做**
-- [ ] **永久記憶**:`MemorySaver`(RAM,程式關掉就消失)換成 `SqliteSaver` / `PostgresSaver`
+- [x] **永久記憶**:連得上 Postgres 時用 `PostgresSaver` 持久化(解鎖多 replica),否則退回 `MemorySaver`(見 `base_agent.get_checkpointer()`)
 - [ ] **多資料庫支援**:在 `catalog.json` / `schema.json` 標 `db` 並加連線路由(先選 DB 再選表/SQL)
 - [ ] **庫存接真資料庫**:`inventory_tools.py` 目前是示範用寫死字典
 - [ ] 資料量再放大時,語意索引換成真正的向量資料庫(呼叫端介面不變)
-- [ ] text-to-SQL 算 KPI 仍可能算錯,給老闆的數字建議用 sql agent 覆核
+- [x] text-to-SQL KPI 覆核:analyst 用 `check_kpi` 對關鍵數字做合理性/區間校驗,異常重查並標示(不直接當結論)
 - [ ] supervisor 每輪多一次調度 LLM 呼叫;長流程要留意 `recursion_limit`
 
 ---
