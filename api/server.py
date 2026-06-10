@@ -193,6 +193,41 @@ def list_ppt_templates():
     return template_cards() if _USE_PRESENTON_PPT else _MCP_TEMPLATES
 
 
+# ppt-workflow 的選項（給單一 agent 頁做成按鈕，對應 make_deck 的參數；每組第一個是預設）。
+# 值對應 ppt-workflow interview 的合法選項；放這裡是 erp↔ppt-workflow 的 UI 契約。
+_PPT_OPTIONS = {
+    "audience": [
+        {"key": "client", "zh": "對客戶提案"},
+        {"key": "sales", "zh": "通用銷售"},
+        {"key": "investor", "zh": "投資人/募資"},
+        {"key": "internal", "zh": "內部討論"},
+    ],
+    "style": [
+        {"key": "navy_amber", "zh": "穩重專業"},
+        {"key": "teal_mint", "zh": "清新科技"},
+        {"key": "charcoal", "zh": "極簡高級"},
+        {"key": "terracotta", "zh": "溫暖人本"},
+    ],
+    "pages": [
+        {"key": "short", "zh": "精簡 8–10"},
+        {"key": "standard", "zh": "標準 12–15"},
+        {"key": "full", "zh": "完整 18+"},
+    ],
+    "tone": [
+        {"key": "data", "zh": "數據導向"},
+        {"key": "story", "zh": "故事帶入"},
+        {"key": "punchy", "zh": "簡潔有力"},
+    ],
+}
+_PPT_OPTION_LABELS = {"audience": "對象", "style": "風格", "pages": "篇幅", "tone": "語氣"}
+
+
+@app.get("/api/ppt/options")
+def ppt_options():
+    """ppt-workflow 的可選參數（對象/風格/篇幅/語氣），給單一 agent 頁做成按鈕。"""
+    return {"groups": _PPT_OPTIONS, "labels": _PPT_OPTION_LABELS}
+
+
 @app.get("/api/agents")
 def list_agents():
     """給單一 agent 頁的選單用。"""

@@ -50,6 +50,19 @@ export async function listPptTemplates(): Promise<PptTemplate[]> {
   return res.json();
 }
 
+// ppt-workflow 的可選參數（對象/風格/篇幅/語氣），給單一 agent 頁做成按鈕。
+export type PptOption = { key: string; zh: string };
+export type PptOptions = {
+  groups: Record<string, PptOption[]>; // audience / style / pages / tone
+  labels: Record<string, string>; // 各組的中文標題
+};
+
+export async function listPptOptions(): Promise<PptOptions> {
+  const res = await fetch(`${BASE}/api/ppt/options`);
+  if (!res.ok) throw new Error("無法取得簡報選項");
+  return res.json();
+}
+
 export async function runAgent(
   name: string,
   message: string,

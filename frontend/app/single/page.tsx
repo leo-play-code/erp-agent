@@ -3,11 +3,11 @@
 import { useEffect, useState } from "react";
 import {
   listAgents,
-  listPptTemplates,
+  listPptOptions,
   runAgent,
   extractFileLink,
   type AgentInfo,
-  type PptTemplate,
+  type PptOptions,
 } from "@/lib/api";
 import FileCard from "../components/FileCard";
 
@@ -41,17 +41,23 @@ export default function SinglePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // ppt 專用：Presenton template 清單與目前選定的 template
-  const [pptTemplates, setPptTemplates] = useState<PptTemplate[]>([]);
-  const [template, setTemplate] = useState("");
+  // ppt 專用：ppt-workflow 的選項（對象/風格/篇幅/語氣）與目前選定值（每組預設取第一個）
+  const [pptOptions, setPptOptions] = useState<PptOptions | null>(null);
+  const [pptSel, setPptSel] = useState<Record<string, string>>({});
 
   useEffect(() => {
     listAgents()
       .then(setAgents)
       .catch((e) => setListError(e.message));
-    // template 清單只給 ppt 用；抓失敗就靜默（選擇器不顯示，仍可純文字使用）
-    listPptTemplates()
-      .then(setPptTemplates)
+    // 簡報選項只給 ppt 用；抓失敗就靜默（選擇器不顯示，仍可純文字使用）
+    listPptOptions()
+      .then((o) => {
+        setPptOptions(o);
+        // 每組預設選第一個
+        const init: Record<string, string> = {};
+        for (const [k, opts] of Object.entries(o.groups)) init[k] = opts[0]?.key ?? "";
+        setPptSel(init);
+      })
       .catch(() => {});
   }, []);
 
@@ -61,7 +67,6 @@ export default function SinglePage() {
     setFile(null);
     setReply("");
     setError("");
-    setTemplate("");
   }
   const close = () => setActive(null);
 
@@ -73,21 +78,26 @@ export default function SinglePage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [active]);
 
-  const isPpt = !!active && active.name === "ppt" && pptTemplates.length > 0;
+  const isPpt = !!active && active.name === "ppt" && !!pptOptions;
 
   async function handleRun() {
     if (!active) return;
     if (active.needs_text && !message.trim()) return;
     if (!active.needs_text && !file) return;
-    if (isPpt && !template) return; // ppt 必須先選 template
     setLoading(true);
     setError("");
     setReply("");
     try {
       // 不需文字的 agent（如 image）：送一句預設指令，讓它直接處理圖片
       let text = active.needs_text ? message : "請辨識這張圖片的文字";
-      // ppt：把選定的 Presenton template 一起送出，agent 就會直接用它（不需多輪詢問）
-      if (isPpt && template) text = `（指定簡報 template：${template}）\n${text}`;
+      // ppt：把使用者用按鈕選的設定（對象/風格/篇幅/語氣）一起送出，agent 直接餵給 make_deck
+      if (isPpt && pptOptions) {
+        const settings = Object.keys(pptOptions.groups)
+          .filter((k) => pptSel[k])
+          .map((k) => `${pptOptions.labels[k] ?? k}:${pptSel[k]}`)
+          .join("；");
+        text = `（簡報設定 → ${settings}）\n${text}`;
+      }
       setReply(await runAgent(active.name, text, file));
     } catch (e) {
       setError((e as Error).message);
@@ -150,54 +160,46 @@ export default function SinglePage() {
               </div>
             </div>
 
-            {isPpt && (
+            {isPpt && pptOptions && (
               <>
-                <label className="field-label">
-                  簡報 template
-                  <span style={{ color: "var(--slate)", fontWeight: 400 }}>
-                    　·　由你架設的 Presenton 提供（必選）
-                  </span>
-                </label>
-                <div
-                  style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: 10,
-                    marginTop: 8,
-                  }}
-                >
-                  {pptTemplates.map((t) => {
-                    const selected = t.key === template;
-                    return (
-                      <button
-                        key={t.key}
-                        type="button"
-                        onClick={() => setTemplate(t.key)}
-                        className={`agent-option${selected ? " selected" : ""}`}
-                        style={{ minWidth: 116, flex: "0 0 auto" }}
-                        title={t.key}
-                      >
-                        <span className="name">
-                          {selected ? "✓ " : ""}
-                          {t.zh}
-                        </span>
-                        <span className="desc" style={{ fontFamily: "monospace" }}>
-                          {t.key}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-                <div style={{ height: 18 }} />
+                {Object.entries(pptOptions.groups).map(([group, opts]) => (
+                  <div key={group} style={{ marginBottom: 14 }}>
+                    <label className="field-label">
+                      {pptOptions.labels[group] ?? group}
+                    </label>
+                    <div
+                      style={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: 8,
+                        marginTop: 8,
+                      }}
+                    >
+                      {opts.map((o) => {
+                        const selected = o.key === pptSel[group];
+                        return (
+                          <button
+                            key={o.key}
+                            type="button"
+                            onClick={() =>
+                              setPptSel((s) => ({ ...s, [group]: o.key }))
+                            }
+                            className={`agent-option${selected ? " selected" : ""}`}
+                            style={{ minWidth: 96, flex: "0 0 auto" }}
+                            title={o.key}
+                          >
+                            <span className="name">
+                              {selected ? "✓ " : ""}
+                              {o.zh}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+                <div style={{ height: 8 }} />
               </>
-            )}
-
-            {active.name === "ppt" && pptTemplates.length === 0 && (
-              <p style={{ color: "#cd3d64", fontSize: 14, margin: "0 0 16px" }}>
-                ⚠️ 無法取得 Presenton 的 template 清單。請確認 PRESENTON_URL 已設定、Presenton
-                已啟動，且後端 <code>/api/ppt/templates</code> 有回應（可開
-                <code> http://localhost:8000/api/ppt/templates</code> 檢查）。
-              </p>
             )}
 
             {active.needs_text && (
@@ -244,9 +246,7 @@ export default function SinglePage() {
               className="btn btn-primary"
               style={{ marginTop: 22 }}
               disabled={
-                loading ||
-                (active.needs_text ? !message.trim() : !file) ||
-                (isPpt && !template)
+                loading || (active.needs_text ? !message.trim() : !file)
               }
               onClick={handleRun}
             >
