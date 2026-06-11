@@ -14,6 +14,7 @@
 
 import json
 import os
+import re
 import time
 import urllib.parse
 import urllib.request
@@ -69,8 +70,17 @@ def _user_from_bearer(authorization: str | None) -> dict | None:
 
 
 def tenant_of(user: dict | None) -> str:
-    """使用者 → tenant key。沒使用者用 default（向後相容）。"""
-    return "u_" + user["sub"] if user else "default"
+    """使用者 → 公司租戶 key（= email 網域）。同網域＝同公司，資料共享；跨網域隔離。
+    沒使用者 / 無 email 用 default（向後相容、單人模式）。"""
+    if not user or not user.get("email") or "@" not in user["email"]:
+        return "default"
+    domain = user["email"].rsplit("@", 1)[1].lower()
+    return "org_" + re.sub(r"[^a-z0-9]+", "_", domain).strip("_")
+
+
+def user_id_of(user: dict | None) -> str:
+    """使用者個人 id（給對話紀錄等個人層資料用）。"""
+    return ("u_" + user["sub"]) if user else "anon"
 
 
 def current_user(authorization: str | None = Header(default=None)) -> dict | None:
