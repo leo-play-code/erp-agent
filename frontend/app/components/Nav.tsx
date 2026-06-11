@@ -17,6 +17,7 @@ function gatedLinks(user: AuthUser | null) {
   const links = [{ href: "/mailbox", label: "公司信箱" }];
   if (user.role === "company_admin") links.push({ href: "/admin/people", label: "員工管理" });
   if (user.developer) links.push({ href: "/dev-agent", label: "開發者 Agent" });
+  links.push({ href: "/account", label: "帳號" });
   return links;
 }
 

@@ -52,6 +52,15 @@ export async function getAuthConfig(): Promise<AuthConfig> {
   }
 }
 
+// 修改自己的密碼（僅本地帳密帳號）。
+export async function changePassword(oldPassword: string, newPassword: string): Promise<void> {
+  const form = new FormData();
+  form.append("old_password", oldPassword);
+  form.append("new_password", newPassword);
+  const res = await apiFetch(`${BASE}/api/auth/change-password`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await errText(res, "修改密碼失敗"));
+}
+
 // 帳密登入（模式 A 本地 / B IMAP・LDAP）。成功後存 token+user，行為同 loginWithGoogle。
 export async function loginWithPassword(email: string, password: string): Promise<AuthUser> {
   const form = new FormData();

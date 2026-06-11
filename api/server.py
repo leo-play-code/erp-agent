@@ -110,6 +110,26 @@ def auth_login(email: str = Form(...), password: str = Form(...)):
     }
 
 
+@app.post("/api/auth/change-password")
+def change_password(
+    old_password: str = Form(...), new_password: str = Form(...),
+    user: dict | None = Depends(current_user),
+):
+    """修改自己的登入密碼（僅限本地帳密帳號）。"""
+    if not user:
+        raise HTTPException(status_code=401, detail="請先登入")
+    if len(new_password) < 6:
+        raise HTTPException(status_code=400, detail="新密碼至少 6 個字元")
+    tenant, email = tenant_of(user), user.get("email", "")
+    rec = control_plane.get_user_by_email(tenant, email)
+    if not rec or not rec.get("password_hash"):
+        raise HTTPException(status_code=400, detail="此帳號非帳密登入，無法在此修改密碼")
+    if not control_plane.verify_password(old_password, rec["password_hash"]):
+        raise HTTPException(status_code=401, detail="舊密碼不正確")
+    control_plane.set_password(tenant, email, new_password)
+    return {"ok": True}
+
+
 @app.post("/api/auth/google")
 def auth_google(credential: str = Form(...)):
     """前端送 Google ID token（credential）→ 驗證後回自家 JWT 與使用者資料（首次即註冊）。
