@@ -20,9 +20,14 @@ import urllib.parse
 import urllib.request
 
 import jwt
+from dotenv import load_dotenv
 from fastapi import Header, HTTPException
 
 from tools.tenant import current_tenant_var  # 跨層共用的租戶 context（低層，api/tools 都能用）
+
+# 本模組在 import 當下就讀環境變數，且在 server.py 比會載入 .env 的 tools 更早被 import，
+# 故這裡自行 load_dotenv()，確保不論啟動方式都讀得到 .env 的 GOOGLE_CLIENT_ID / APP_JWT_SECRET。
+load_dotenv()
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 APP_JWT_SECRET = os.getenv("APP_JWT_SECRET", "dev-insecure-change-me")
