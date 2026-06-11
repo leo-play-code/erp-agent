@@ -11,7 +11,9 @@
 - 執行 `venv/bin/python -m db.control_plane` 會建好 public 的控制面表（冪等）。
 """
 
+import hashlib
 import os
+import secrets
 from contextlib import contextmanager
 
 import psycopg
@@ -35,20 +37,29 @@ CREATE TABLE IF NOT EXISTS companies (
     schema_name TEXT NOT NULL,               -- 業務資料所在 schema（tenant_<key>）
     dev_quota   INT  NOT NULL DEFAULT 5,     -- 開發者席次上限（3~5）
     admin_email TEXT,                        -- 指定的公司管理員 email（登入時自動授 company_admin）
+    auth_method TEXT NOT NULL DEFAULT 'local',-- 這間公司用哪種登入：local | imap | ldap | google
+    auth_config JSONB,                        -- imap/ldap 連線設定（host/port/ssl/base_dn…）
     status      TEXT NOT NULL DEFAULT 'active',
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS app_users (
-    sub        TEXT PRIMARY KEY,             -- Google sub（與 JWT sub / user_id_of 一致）
-    tenant     TEXT NOT NULL,
-    email      TEXT,
-    name       TEXT,
-    role       TEXT NOT NULL DEFAULT 'employee',  -- company_admin | employee
-    developer  BOOLEAN NOT NULL DEFAULT false,    -- 開發者席次旗標（開啟開發者 agent 分頁）
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    sub           TEXT PRIMARY KEY,          -- 身分 key：Google=google sub；本地/IMAP/LDAP=local:<email>
+    tenant        TEXT NOT NULL,
+    email         TEXT,
+    name          TEXT,
+    role          TEXT NOT NULL DEFAULT 'employee',  -- company_admin | employee
+    developer     BOOLEAN NOT NULL DEFAULT false,    -- 開發者席次旗標（開啟開發者 agent 分頁）
+    password_hash TEXT,                        -- 僅 local 模式用（scrypt salt:hash）；Google/IMAP/LDAP 為 NULL
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS app_users_tenant_idx ON app_users (tenant);
+CREATE INDEX IF NOT EXISTS app_users_tenant_email_idx ON app_users (tenant, lower(email));
+
+-- 既有資料庫補欄位（冪等；新欄位上線時自動加上）
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS auth_method TEXT NOT NULL DEFAULT 'local';
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS auth_config JSONB;
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS password_hash TEXT;
 
 CREATE TABLE IF NOT EXISTS mailbox_messages (
     id         SERIAL PRIMARY KEY,
@@ -183,6 +194,104 @@ def upsert_user(sub: str, tenant: str, email: str = "", name: str = "") -> dict:
             (sub, tenant, email, name, role),
         )
         return cur.fetchone()
+
+
+# ── 帳號密碼登入（模式 A，本地）+ 憑證驗證分派（A/B/C）──────────────────
+def hash_password(pw: str) -> str:
+    """scrypt 雜湊（stdlib，無外部依賴），格式 salt:hash。"""
+    salt = secrets.token_hex(16)
+    h = hashlib.scrypt(pw.encode(), salt=bytes.fromhex(salt), n=16384, r=8, p=1, dklen=64).hex()
+    return f"{salt}:{h}"
+
+
+def verify_password(pw: str, stored: str | None) -> bool:
+    if not stored or ":" not in stored:
+        return False
+    salt, h = stored.split(":", 1)
+    try:
+        test = hashlib.scrypt(pw.encode(), salt=bytes.fromhex(salt), n=16384, r=8, p=1, dklen=64).hex()
+    except Exception:  # noqa: BLE001
+        return False
+    return secrets.compare_digest(test, h)
+
+
+def _local_sub(tenant: str, email: str) -> str:
+    """本地/IMAP/LDAP 帳號的身分 key（無 Google sub）：穩定、可當 thread_id 用。"""
+    return f"local:{tenant}:{email.lower()}"
+
+
+def get_user_by_email(tenant: str, email: str) -> dict | None:
+    with _conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT * FROM app_users WHERE tenant = %s AND lower(email) = lower(%s)",
+            (tenant, email),
+        )
+        return cur.fetchone()
+
+
+def create_employee(
+    tenant: str, email: str, name: str = "", password: str | None = None,
+    role: str = "employee",
+) -> dict:
+    """管理員後台建員工帳號。給 password＝本地帳密登入；不給＝IMAP/LDAP 允許名單（用公司帳密登入）。"""
+    ensure_company(tenant, name=None)
+    sub = _local_sub(tenant, email)
+    pwd = hash_password(password) if password else None
+    with _conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """INSERT INTO app_users (sub, tenant, email, name, role, password_hash)
+               VALUES (%s,%s,%s,%s,%s,%s)
+               ON CONFLICT (sub) DO UPDATE SET
+                   name = COALESCE(NULLIF(EXCLUDED.name,''), app_users.name),
+                   role = EXCLUDED.role,
+                   password_hash = COALESCE(EXCLUDED.password_hash, app_users.password_hash)
+               RETURNING *""",
+            (sub, tenant, email, name, role, pwd),
+        )
+        return cur.fetchone()
+
+
+def set_password(tenant: str, email: str, password: str) -> None:
+    with _conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE app_users SET password_hash = %s WHERE tenant = %s AND lower(email) = lower(%s)",
+            (hash_password(password), tenant, email),
+        )
+
+
+def set_company_auth(tenant: str, method: str, config: dict | None = None) -> dict:
+    """設定某公司用哪種登入（local/imap/ldap/google）與其連線設定。"""
+    if method not in ("local", "imap", "ldap", "google"):
+        raise ValueError("登入方式僅能是 local / imap / ldap / google")
+    import json
+    with _conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "UPDATE companies SET auth_method = %s, auth_config = %s WHERE tenant = %s RETURNING *",
+            (method, json.dumps(config) if config is not None else None, tenant),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise ValueError("找不到該公司")
+        return row
+
+
+def verify_credentials(tenant: str, email: str, password: str) -> dict | None:
+    """依公司的 auth_method 驗證帳密，回使用者列或 None。
+
+    - local：比對 app_users.password_hash。
+    - imap/ldap：向公司的 mail/AD 伺服器驗證；且該 email 必須已被管理員建檔（允許名單）。
+    """
+    company = get_company(tenant) or {}
+    method = company.get("auth_method") or "local"
+    user = get_user_by_email(tenant, email)
+    if method == "local":
+        return user if (user and verify_password(password, user.get("password_hash"))) else None
+    if method in ("imap", "ldap"):
+        if not user:  # 允許名單：管理員沒建檔的人不得登入
+            return None
+        from tools.auth_backends import verify_external
+        return user if verify_external(method, company.get("auth_config") or {}, email, password) else None
+    return None  # google 走另一條（/api/auth/google）
 
 
 def list_company_users(tenant: str) -> list[dict]:

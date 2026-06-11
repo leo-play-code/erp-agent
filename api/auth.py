@@ -31,7 +31,22 @@ load_dotenv()
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 APP_JWT_SECRET = os.getenv("APP_JWT_SECRET", "dev-insecure-change-me")
-AUTH_ENABLED = bool(GOOGLE_CLIENT_ID)
+
+# 啟用哪些登入方式（前端登入頁據此顯示）：
+#   google = Google 登入（雲端）；local = 帳號密碼（管理員建帳號）；
+#   imap/ldap = 帳密表單，但向公司 mail/AD 驗證（每間公司於 companies.auth_method 指定實際驗法）。
+# AUTH_MODES 環境變數可明列（逗號分隔）；沒設時：有 GOOGLE_CLIENT_ID → google+local，否則單人免登入（向後相容）。
+_modes_env = os.getenv("AUTH_MODES", "").strip()
+if _modes_env:
+    AUTH_MODES = [m.strip() for m in _modes_env.split(",") if m.strip()]
+elif GOOGLE_CLIENT_ID:
+    AUTH_MODES = ["google", "local"]
+else:
+    AUTH_MODES = []
+# 登入頁有「帳密表單」(local/imap/ldap 任一) 或 Google 按鈕
+PASSWORD_LOGIN = any(m in AUTH_MODES for m in ("local", "imap", "ldap"))
+GOOGLE_LOGIN = "google" in AUTH_MODES
+AUTH_ENABLED = bool(AUTH_MODES)
 _ALG = "HS256"
 _TTL = 7 * 24 * 3600  # JWT 有效 7 天
 

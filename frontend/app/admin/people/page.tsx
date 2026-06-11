@@ -6,6 +6,7 @@ import {
   adminListUsers,
   adminSetRole,
   adminSetDeveloper,
+  adminCreateUser,
   getUser,
   type CompanyUser,
 } from "@/lib/api";
@@ -65,6 +66,8 @@ export default function PeopleAdminPage() {
   return (
     <div className="container" style={{ padding: "32px 24px", maxWidth: 880 }}>
       <h2>員工管理</h2>
+      <CreateEmployee onCreated={load} />
+
       <p className="muted" style={{ marginBottom: 16 }}>
         開發者席次：{used} / {quota}
         {atCap && <span style={{ color: "#c0392b", marginLeft: 8 }}>（已額滿）</span>}
@@ -109,5 +112,35 @@ export default function PeopleAdminPage() {
         </tbody>
       </table>
     </div>
+  );
+}
+
+// 管理員建員工帳號：填密碼＝本地帳密登入；留空＝IMAP/LDAP 允許名單（員工用公司帳密登入）。
+function CreateEmployee({ onCreated }: { onCreated: () => void }) {
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true); setMsg("");
+    try {
+      await adminCreateUser(email, name, password, "employee");
+      setEmail(""); setName(""); setPassword("");
+      setMsg("已建立 ✓");
+      onCreated();
+    } catch (e) { setMsg((e as Error).message); } finally { setBusy(false); }
+  };
+
+  return (
+    <form onSubmit={submit} style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", margin: "12px 0 20px" }}>
+      <input placeholder="員工 email（須同公司網域）" value={email} onChange={(e) => setEmail(e.target.value)} style={{ padding: 8, minWidth: 220 }} />
+      <input placeholder="姓名" value={name} onChange={(e) => setName(e.target.value)} style={{ padding: 8, width: 120 }} />
+      <input placeholder="密碼（留空＝用公司信箱/AD登入）" value={password} onChange={(e) => setPassword(e.target.value)} style={{ padding: 8, minWidth: 200 }} />
+      <button disabled={busy || !email}>{busy ? "建立中…" : "新增員工"}</button>
+      {msg && <span className="muted" style={{ fontSize: 13 }}>{msg}</span>}
+    </form>
   );
 }

@@ -24,7 +24,10 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from api.auth import (
     AUTH_ENABLED,
+    AUTH_MODES,
     GOOGLE_CLIENT_ID,
+    GOOGLE_LOGIN,
+    PASSWORD_LOGIN,
     current_tenant,
     current_tenant_var,
     current_user,
@@ -74,9 +77,37 @@ async def _concurrency_slot():
 # ── 登入 / 註冊（Google） ────────────────────────────────────────────────
 @app.get("/api/auth/config")
 def auth_config():
-    """前端問：要不要登入 + 用哪個 Google Client ID（公開值，故由後端供給，前端免重 build）。
-    沒設 GOOGLE_CLIENT_ID 就是單人模式，前端跳過登入頁。"""
-    return {"auth_enabled": AUTH_ENABLED, "google_client_id": GOOGLE_CLIENT_ID}
+    """前端問：要不要登入、提供哪些登入方式（Google 按鈕 / 帳密表單）、Google Client ID。
+    沒啟用任何登入方式時＝單人模式，前端跳過登入頁。"""
+    return {
+        "auth_enabled": AUTH_ENABLED,
+        "modes": AUTH_MODES,
+        "google_login": GOOGLE_LOGIN,
+        "password_login": PASSWORD_LOGIN,
+        "google_client_id": GOOGLE_CLIENT_ID,
+    }
+
+
+@app.post("/api/auth/login")
+def auth_login(email: str = Form(...), password: str = Form(...)):
+    """帳密登入（模式 A 本地 / B IMAP・LDAP，依該公司 auth_method 分派驗證）。
+
+    驗證成功回自家 JWT（與 Google 登入同一張、含 role/developer claim）。
+    """
+    if not PASSWORD_LOGIN:
+        raise HTTPException(status_code=400, detail="本系統未啟用帳密登入")
+    tenant = tenant_of({"email": email})
+    try:
+        rec = control_plane.verify_credentials(tenant, email, password)
+    except Exception as e:  # noqa: BLE001 外部 mail/AD 連線等錯誤回友善訊息
+        raise HTTPException(status_code=503, detail=f"登入服務暫時無法使用：{e}")
+    if not rec:
+        raise HTTPException(status_code=401, detail="帳號或密碼錯誤，或你尚未被授予登入權限")
+    user = {"sub": rec["sub"], "email": rec["email"] or email, "name": rec["name"] or ""}
+    return {
+        "token": issue_app_jwt(user, role=rec["role"], developer=rec["developer"]),
+        "user": {"email": user["email"], "name": user["name"], "role": rec["role"], "developer": rec["developer"]},
+    }
 
 
 @app.post("/api/auth/google")
@@ -117,6 +148,47 @@ def admin_list_users(user: dict | None = Depends(require_company_admin)):
         "dev_quota": control_plane.developer_quota(tenant),
         "dev_used": control_plane.developer_count(tenant),
     }
+
+
+@app.post("/api/admin/users")
+def admin_create_user(
+    email: str = Form(...),
+    name: str = Form(""),
+    password: str = Form(""),
+    role: str = Form("employee"),
+    user: dict | None = Depends(require_company_admin),
+):
+    """建立員工帳號（限本公司）。給 password＝本地帳密登入；不給＝IMAP/LDAP 允許名單。"""
+    tenant = tenant_of(user)
+    email = email.strip().lower()
+    if "@" not in email:
+        raise HTTPException(status_code=400, detail="請輸入有效 email")
+    if tenant_of({"email": email}) != tenant:
+        raise HTTPException(status_code=400, detail="email 網域需與貴公司相同")
+    if role not in ("employee", "company_admin"):
+        raise HTTPException(status_code=400, detail="角色僅能是 employee 或 company_admin")
+    r = control_plane.create_employee(tenant, email, name, password or None, role)
+    return {"sub": r["sub"], "email": r["email"], "name": r["name"], "role": r["role"], "developer": r["developer"]}
+
+
+@app.post("/api/admin/auth-method")
+def admin_set_auth_method(
+    method: str = Form(...),
+    config: str = Form(""),  # imap/ldap 的 JSON 設定
+    user: dict | None = Depends(require_company_admin),
+):
+    """設定貴公司的登入方式（local / imap / ldap / google）與連線設定。"""
+    cfg = None
+    if config.strip():
+        try:
+            cfg = json.loads(config)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="連線設定不是有效 JSON")
+    try:
+        c = control_plane.set_company_auth(tenant_of(user), method, cfg)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"tenant": c["tenant"], "auth_method": c["auth_method"]}
 
 
 @app.post("/api/admin/users/{sub}/role")

@@ -36,7 +36,13 @@ async function apiFetch(input: string, init: RequestInit = {}): Promise<Response
   return res;
 }
 
-export type AuthConfig = { auth_enabled: boolean; google_client_id: string };
+export type AuthConfig = {
+  auth_enabled: boolean;
+  google_client_id: string;
+  modes?: string[];
+  google_login?: boolean;
+  password_login?: boolean;
+};
 export async function getAuthConfig(): Promise<AuthConfig> {
   try {
     const res = await globalThis.fetch(`${BASE}/api/auth/config`);
@@ -44,6 +50,19 @@ export async function getAuthConfig(): Promise<AuthConfig> {
   } catch {
     return { auth_enabled: false, google_client_id: "" };
   }
+}
+
+// 帳密登入（模式 A 本地 / B IMAP・LDAP）。成功後存 token+user，行為同 loginWithGoogle。
+export async function loginWithPassword(email: string, password: string): Promise<AuthUser> {
+  const form = new FormData();
+  form.append("email", email);
+  form.append("password", password);
+  const res = await globalThis.fetch(`${BASE}/api/auth/login`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await errText(res, "登入失敗"));
+  const data = await res.json();
+  localStorage.setItem("erp_token", data.token);
+  localStorage.setItem("erp_user", JSON.stringify(data.user));
+  return data.user as AuthUser;
 }
 
 // Google ID token → 自家 JWT；存起來（首次登入即註冊）。
@@ -261,6 +280,27 @@ export async function adminListUsers(): Promise<AdminUsers> {
   const res = await apiFetch(`${BASE}/api/admin/users`);
   if (!res.ok) throw new Error(await errText(res, "無法取得人員清單"));
   return res.json();
+}
+
+export async function adminCreateUser(
+  email: string, name: string, password: string, role = "employee"
+): Promise<CompanyUser> {
+  const form = new FormData();
+  form.append("email", email);
+  form.append("name", name);
+  if (password) form.append("password", password);
+  form.append("role", role);
+  const res = await apiFetch(`${BASE}/api/admin/users`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await errText(res, "建立員工失敗"));
+  return res.json();
+}
+
+export async function adminSetAuthMethod(method: string, config?: object): Promise<void> {
+  const form = new FormData();
+  form.append("method", method);
+  if (config) form.append("config", JSON.stringify(config));
+  const res = await apiFetch(`${BASE}/api/admin/auth-method`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await errText(res, "設定登入方式失敗"));
 }
 
 export async function adminSetRole(sub: string, role: string): Promise<CompanyUser> {
