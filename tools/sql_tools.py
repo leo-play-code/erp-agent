@@ -12,9 +12,12 @@
 import logging
 import os
 import re
+from contextlib import contextmanager
 
 from dotenv import load_dotenv
 from psycopg_pool import ConnectionPool
+
+from tools.tenant import get_tenant, schema_for_tenant
 
 load_dotenv()
 
@@ -52,15 +55,27 @@ def _get_pool():
             min_size=0,  # 不維持常駐閒置連線：DB 沒起來時不會在背景一直重連噴 log
             max_size=int(os.getenv("DB_POOL_MAX", "10")),
             timeout=5,  # 取不到連線時最多等 5 秒就拋（避免卡住，由呼叫端回友善字串）
-            kwargs={"options": _CONN_OPTIONS, "connect_timeout": 3},
+            # prepare_threshold=0：每次 checkout 都 SET search_path，且連線跨租戶重用，
+            # 關掉 server-side prepared statement 避免快取的查詢計畫綁到「上一個租戶」的 schema。
+            kwargs={"options": _CONN_OPTIONS, "connect_timeout": 3, "prepare_threshold": 0},
             open=True,
         )
     return _pool
 
 
+@contextmanager
 def _get_conn():
-    """從連線池借一個唯讀、有逾時保護的連線（用 with 包住，離開時自動歸還而非關閉）。"""
-    return _get_pool().connection()
+    """從連線池借一個唯讀、有逾時保護的連線，並依「目前租戶」設好 search_path。
+
+    多租戶：每公司一個 schema（schema_for_tenant）。連線會在租戶間重用，所以 **每次借出
+    都重設** search_path（不能只在開池時設一次），否則 A 公司的連線會讀到 B 公司的資料——
+    這是最高風險的隔離點。search_path 是 session 層設定，唯讀交易底下仍可執行。
+    """
+    with _get_pool().connection() as conn:
+        schema = schema_for_tenant(get_tenant())
+        with conn.cursor() as cur:
+            cur.execute(f'SET search_path TO "{schema}", public')
+        yield conn
 
 
 def _validate(query: str) -> str | None:
@@ -107,10 +122,13 @@ def describe_schema() -> str:
 
     在不確定有哪些表、欄位叫什麼時先呼叫這個，再用 run_sql_query 下查詢。
     """
+    # current_schema()＝search_path 第一個存在的 schema：多租戶時是該公司的 tenant_<key>，
+    # 單人模式（default）時是 public。如此 SQL agent 只看得到「自己公司」的表，看不到
+    # 控制面（companies/users/信箱）與 checkpoint 等放在 public 的表。
     sql = """
         SELECT table_name, column_name, data_type
         FROM information_schema.columns
-        WHERE table_schema = 'public'
+        WHERE table_schema = current_schema()
         ORDER BY table_name, ordinal_position
     """
     try:

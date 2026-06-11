@@ -11,6 +11,15 @@ const LINKS = [
   { href: "/admin", label: "知識庫後台" },
 ];
 
+// 依角色/席次顯示的分頁：公司信箱（全員）、員工管理（管理員）、開發者 Agent（有席次者）。
+function gatedLinks(user: AuthUser | null) {
+  if (!user) return [] as { href: string; label: string }[];
+  const links = [{ href: "/mailbox", label: "公司信箱" }];
+  if (user.role === "company_admin") links.push({ href: "/admin/people", label: "員工管理" });
+  if (user.developer) links.push({ href: "/dev-agent", label: "開發者 Agent" });
+  return links;
+}
+
 export default function Nav() {
   const pathname = usePathname();
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -28,7 +37,7 @@ export default function Nav() {
           <span className="brand-text">ERP AI 助理</span>
         </Link>
         <div className="nav-links" style={{ alignItems: "center", gap: 14 }}>
-          {LINKS.map((l) => (
+          {[...LINKS, ...gatedLinks(user)].map((l) => (
             <Link
               key={l.href}
               href={l.href}

@@ -28,11 +28,15 @@ from api.auth import (
     current_tenant,
     current_tenant_var,
     current_user,
+    is_developer,
     issue_app_jwt,
+    require_company_admin,
+    tenant_of,
     user_id_of,
     verify_google_id_token,
 )
-from graph.erp_graph import ASK_MARKER, erp_graph
+from db import control_plane
+from graph.erp_graph import ASK_MARKER, DEV_AGENT_ROUTE, erp_graph
 from graph.registry import AGENTS
 from tools.excel_import import import_excel
 from tools.ppt_tools import template_cards
@@ -77,9 +81,122 @@ def auth_config():
 
 @app.post("/api/auth/google")
 def auth_google(credential: str = Form(...)):
-    """前端送 Google ID token（credential）→ 驗證後回自家 JWT 與使用者資料（首次即註冊）。"""
+    """前端送 Google ID token（credential）→ 驗證後回自家 JWT 與使用者資料（首次即註冊）。
+
+    首次登入會在控制面 app_users 建檔（公司第一人或指定 admin_email → company_admin），
+    並把 role / developer 兩個權限 claim 簽進 JWT，供前端分頁顯示與 cf SSO 把關。
+    """
     user = verify_google_id_token(credential)
-    return {"token": issue_app_jwt(user), "user": {"email": user["email"], "name": user["name"]}}
+    tenant = tenant_of(user)
+    role, developer = "employee", False
+    try:
+        rec = control_plane.upsert_user(
+            user["sub"], tenant, user.get("email", ""), user.get("name", "")
+        )
+        role, developer = rec["role"], rec["developer"]
+    except Exception:  # noqa: BLE001 控制面 DB 不可用時仍允許登入（降級為一般員工）
+        pass
+    return {
+        "token": issue_app_jwt(user, role=role, developer=developer),
+        "user": {"email": user["email"], "name": user["name"], "role": role, "developer": developer},
+    }
+
+
+# ── 後台：公司人員管理（RBAC，限 company_admin）─────────────────────────
+@app.get("/api/admin/users")
+def admin_list_users(user: dict | None = Depends(require_company_admin)):
+    """列出本公司人員 + 角色 + 開發者旗標，以及開發者席次用量（x/上限）。"""
+    tenant = tenant_of(user)
+    rows = control_plane.list_company_users(tenant)
+    return {
+        "users": [
+            {"sub": r["sub"], "email": r["email"], "name": r["name"],
+             "role": r["role"], "developer": r["developer"]}
+            for r in rows
+        ],
+        "dev_quota": control_plane.developer_quota(tenant),
+        "dev_used": control_plane.developer_count(tenant),
+    }
+
+
+@app.post("/api/admin/users/{sub}/role")
+def admin_set_role(sub: str, role: str = Form(...), user: dict | None = Depends(require_company_admin)):
+    """設定人員角色（company_admin / employee）。"""
+    try:
+        r = control_plane.set_role(tenant_of(user), sub, role)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"sub": r["sub"], "role": r["role"], "developer": r["developer"]}
+
+
+@app.post("/api/admin/users/{sub}/developer")
+def admin_set_developer(sub: str, on: bool = Form(...), user: dict | None = Depends(require_company_admin)):
+    """授予 / 收回開發者席次（授予前檢查公司席次上限）。"""
+    try:
+        r = control_plane.set_developer(tenant_of(user), sub, on)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"sub": r["sub"], "role": r["role"], "developer": r["developer"]}
+
+
+# ── 公司站內信箱（員工間訊息 + 系統通知 + 公告）─────────────────────────
+def _sub_of(user: dict | None) -> str:
+    return (user or {}).get("sub", "anon")
+
+
+@app.get("/api/mailbox/inbox")
+def mailbox_inbox(user: dict | None = Depends(current_user)):
+    return {"messages": control_plane.inbox(tenant_of(user), _sub_of(user))}
+
+
+@app.post("/api/mailbox/send")
+def mailbox_send(
+    recipients: str = Form(...),  # email 清單（JSON 陣列或逗號分隔）
+    subject: str = Form(""),
+    body: str = Form(""),
+    user: dict | None = Depends(current_user),
+):
+    """寄站內信給同公司成員（以 email 指定收件者）。"""
+    tenant = tenant_of(user)
+    emails = (
+        json.loads(recipients)
+        if recipients.strip().startswith("[")
+        else [e.strip() for e in recipients.split(",") if e.strip()]
+    )
+    people = {u["email"]: u["sub"] for u in control_plane.list_company_users(tenant) if u["email"]}
+    subs = [people[e] for e in emails if e in people]
+    if not subs:
+        raise HTTPException(status_code=400, detail="查無收件者（須為同公司成員）")
+    mid = control_plane.send_message(tenant, _sub_of(user), subs, subject, body)
+    for r in subs:  # 同步給每位收件者一則通知
+        control_plane.create_notification(tenant, r, "message", f"新訊息：{subject}", link="/mailbox")
+    return {"id": mid}
+
+
+@app.post("/api/mailbox/mark-read")
+def mailbox_mark_read(recipient_id: int = Form(...), user: dict | None = Depends(current_user)):
+    control_plane.mark_message_read(_sub_of(user), recipient_id)
+    return {"ok": True}
+
+
+@app.post("/api/mailbox/announcement")
+def mailbox_announcement(
+    subject: str = Form(""), body: str = Form(""), user: dict | None = Depends(require_company_admin)
+):
+    """發布公司公告（限管理員），fan-out 給全公司成員。"""
+    mid = control_plane.post_announcement(tenant_of(user), _sub_of(user), subject, body)
+    return {"id": mid}
+
+
+@app.get("/api/mailbox/notifications")
+def mailbox_notifications(user: dict | None = Depends(current_user)):
+    return {"notifications": control_plane.notifications(tenant_of(user), _sub_of(user))}
+
+
+@app.post("/api/mailbox/notifications/mark-read")
+def mailbox_notifications_mark(notif_id: int | None = Form(None), user: dict | None = Depends(current_user)):
+    control_plane.mark_notification_read(_sub_of(user), notif_id)
+    return {"ok": True}
 
 
 # 產生的檔案（例如 ppt agent 產出的簡報）放這裡，透過 /files/<檔名> 提供下載
@@ -334,6 +451,7 @@ async def chat_stream(
         # 串流的 generator 是延後在 threadpool 執行，contextvar 可能跟不過來，
         # 故在這裡用閉包捕到的 tenant 顯式設好，確保 RAG 等工具讀到正確租戶。
         current_tenant_var.set(tenant)
+        produced_file = False  # 本回合是否產出可下載檔案（用來在結束時發「任務完成」通知）
         try:
             for update in erp_graph.stream(
                 {"messages": seed}, config, stream_mode="updates"
@@ -341,17 +459,41 @@ async def chat_stream(
                 for node, data in update.items():
                     if node == "supervisor":
                         route = (data or {}).get("route")
-                        if route and route != "FINISH":
+                        if route == DEV_AGENT_ROUTE:
+                            # 使用者要求啟動開發者 agent：有席次就送 action 叫前端切到開發者分頁
+                            #（supervisor 只發訊號、不執行 claude-frontend）；沒席次則禮貌拒絕。
+                            if is_developer(user):
+                                yield json.dumps(
+                                    {"type": "action", "action": "open_dev_agent"},
+                                    ensure_ascii=False,
+                                ) + "\n"
+                            else:
+                                yield json.dumps(
+                                    {"type": "message", "agent": "system",
+                                     "content": "你目前沒有開發者席次，無法啟動開發者 Agent，請洽公司管理員開通。"},
+                                    ensure_ascii=False,
+                                ) + "\n"
+                        elif route and route != "FINISH":
                             yield json.dumps(
                                 {"type": "status", "agent": route},
                                 ensure_ascii=False,
                             ) + "\n"
                     else:
                         for m in (data or {}).get("messages", []):
+                            if "/files/" in (m.content or ""):
+                                produced_file = True
                             yield json.dumps(
                                 {"type": "message", "agent": node, "content": m.content},
                                 ensure_ascii=False,
                             ) + "\n"
+            # 產出了可下載檔案（如簡報/報表）才發一則「任務完成」通知，避免每輪都打擾。
+            if produced_file and AUTH_ENABLED and user:
+                try:
+                    control_plane.create_notification(
+                        tenant, _sub_of(user), "job_done", "你的檔案已產生完成", link="/"
+                    )
+                except Exception:  # noqa: BLE001 通知失敗不影響對話
+                    pass
             yield json.dumps({"type": "done"}, ensure_ascii=False) + "\n"
         except Exception as e:  # 串流中途出錯也要讓前端知道，不要靜默斷掉
             yield json.dumps(

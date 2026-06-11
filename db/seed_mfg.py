@@ -144,9 +144,19 @@ def rand_date(a=START, b=END):
     return a + timedelta(days=random.randint(0, (b - a).days))
 
 
-def main() -> None:
+def main(schema: str = "public", seed_data: bool = True) -> None:
+    """建立製造業 schema，並（預設）灌入 mock 資料。
+
+    多租戶：`schema` 指定公司 schema；需在同 schema 先跑過 db.seed（會讀 employees）。
+    `seed_data=False` 只建表結構、不灌假資料。
+    """
     with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
+        cur.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"; SET search_path TO "{schema}";')
         cur.execute(SCHEMA)
+        if not seed_data:
+            conn.commit()
+            print(f"完成：已在 schema {schema} 建立製造業表（未灌假資料）。")
+            return
 
         # 取既有員工當業務代表（HR 已 seed 時）
         cur.execute("SELECT id FROM employees")

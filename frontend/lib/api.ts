@@ -8,7 +8,12 @@ const BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 export function getToken(): string | null {
   return typeof window !== "undefined" ? localStorage.getItem("erp_token") : null;
 }
-export type AuthUser = { email: string; name: string };
+export type AuthUser = {
+  email: string;
+  name: string;
+  role?: string; // company_admin | employee
+  developer?: boolean; // 是否擁有開發者席次（顯示「開發者 Agent」分頁）
+};
 export function getUser(): AuthUser | null {
   if (typeof window === "undefined") return null;
   const s = localStorage.getItem("erp_user");
@@ -242,10 +247,107 @@ export async function wikiPublishAll(items: WikiDraft[]): Promise<string> {
   return (await res.json()).text;
 }
 
+// ── 後台：公司人員管理（RBAC，限 company_admin）────────────────────────
+export type CompanyUser = {
+  sub: string;
+  email: string;
+  name: string;
+  role: string; // company_admin | employee
+  developer: boolean;
+};
+export type AdminUsers = { users: CompanyUser[]; dev_quota: number; dev_used: number };
+
+export async function adminListUsers(): Promise<AdminUsers> {
+  const res = await apiFetch(`${BASE}/api/admin/users`);
+  if (!res.ok) throw new Error(await errText(res, "無法取得人員清單"));
+  return res.json();
+}
+
+export async function adminSetRole(sub: string, role: string): Promise<CompanyUser> {
+  const form = new FormData();
+  form.append("role", role);
+  const res = await apiFetch(`${BASE}/api/admin/users/${encodeURIComponent(sub)}/role`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await errText(res, "設定角色失敗"));
+  return res.json();
+}
+
+export async function adminSetDeveloper(sub: string, on: boolean): Promise<CompanyUser> {
+  const form = new FormData();
+  form.append("on", String(on));
+  const res = await apiFetch(`${BASE}/api/admin/users/${encodeURIComponent(sub)}/developer`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await errText(res, "設定開發者席次失敗"));
+  return res.json();
+}
+
+// ── 公司站內信箱 ──────────────────────────────────────────────────────
+export type MailMessage = {
+  id: number;
+  subject: string;
+  body: string;
+  kind: string; // message | announcement
+  sender_sub: string | null;
+  sender_name: string | null;
+  sender_email: string | null;
+  recipient_id: number;
+  read_at: string | null;
+  created_at: string;
+};
+export type Notification = {
+  id: number;
+  kind: string;
+  title: string;
+  body: string;
+  link: string;
+  read_at: string | null;
+  created_at: string;
+};
+
+export async function mailboxInbox(): Promise<MailMessage[]> {
+  const res = await apiFetch(`${BASE}/api/mailbox/inbox`);
+  if (!res.ok) throw new Error("無法取得信箱");
+  return (await res.json()).messages;
+}
+
+export async function mailboxSend(recipients: string[], subject: string, body: string): Promise<void> {
+  const form = new FormData();
+  form.append("recipients", JSON.stringify(recipients));
+  form.append("subject", subject);
+  form.append("body", body);
+  const res = await apiFetch(`${BASE}/api/mailbox/send`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await errText(res, "寄信失敗"));
+}
+
+export async function mailboxMarkRead(recipientId: number): Promise<void> {
+  const form = new FormData();
+  form.append("recipient_id", String(recipientId));
+  await apiFetch(`${BASE}/api/mailbox/mark-read`, { method: "POST", body: form });
+}
+
+export async function mailboxAnnounce(subject: string, body: string): Promise<void> {
+  const form = new FormData();
+  form.append("subject", subject);
+  form.append("body", body);
+  const res = await apiFetch(`${BASE}/api/mailbox/announcement`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await errText(res, "發布公告失敗"));
+}
+
+export async function mailboxNotifications(): Promise<Notification[]> {
+  const res = await apiFetch(`${BASE}/api/mailbox/notifications`);
+  if (!res.ok) throw new Error("無法取得通知");
+  return (await res.json()).notifications;
+}
+
+export async function mailboxMarkNotificationsRead(notifId?: number): Promise<void> {
+  const form = new FormData();
+  if (notifId != null) form.append("notif_id", String(notifId));
+  await apiFetch(`${BASE}/api/mailbox/notifications/mark-read`, { method: "POST", body: form });
+}
+
 // 串流事件：supervisor 派 Agent(status)、某 Agent 的產出(message)、結束(done)、錯誤(error)
 export type ChatStreamEvent =
   | { type: "status"; agent: string }
   | { type: "message"; agent: string; content: string }
+  | { type: "action"; action: string } // 例：open_dev_agent → 前端切到開發者分頁
   | { type: "done" }
   | { type: "error"; detail: string };
 
