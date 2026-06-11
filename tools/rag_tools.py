@@ -54,6 +54,11 @@ def _s3_enabled() -> bool:
     return bool(os.getenv("S3_ENDPOINT_URL") and os.getenv("S3_BUCKET"))
 
 
+def _kb_pg_enabled() -> bool:
+    """設 KB_BACKEND=postgres → 知識庫切段/向量/[[ ]]關聯改存 Postgres（pgvector）。"""
+    return os.getenv("KB_BACKEND", "").lower() == "postgres"
+
+
 @functools.lru_cache(maxsize=1)
 def _s3():
     import boto3
@@ -74,6 +79,9 @@ def _embeddings():
 
 def _load() -> list[dict]:
     tenant = get_tenant()
+    if _kb_pg_enabled():  # Postgres + pgvector 後端（含 Obsidian 關聯入庫）
+        from tools import kb_store
+        return kb_store.load(tenant)
     if _s3_enabled():
         from botocore.exceptions import ClientError
 
@@ -100,6 +108,10 @@ def _load() -> list[dict]:
 
 def _save(items: list[dict]) -> None:
     tenant = get_tenant()
+    if _kb_pg_enabled():
+        from tools import kb_store
+        kb_store.save(tenant, items)
+        return
     if _s3_enabled():
         bucket = os.getenv("S3_BUCKET")
         body = json.dumps({"items": items}, ensure_ascii=False).encode("utf-8")
