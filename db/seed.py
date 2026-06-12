@@ -93,9 +93,18 @@ def annual_quota(years: float) -> float:
     return float(min(30, 15 + (int(years) - 9)))  # 滿10年起每年+1，上限30
 
 
-def main() -> None:
+def main(schema: str = "public", seed_data: bool = True) -> None:
+    """建立人事 schema，並（預設）灌入 mock 資料。
+
+    多租戶：`schema` 指定要建到哪個公司 schema（provision 新公司時傳 tenant_<key>）。
+    `seed_data=False` 只建表結構、不灌假資料（給真實空白公司用）。
+    """
     with psycopg.connect(DATABASE_URL, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"; SET search_path TO "{schema}";')
         cur.execute(SCHEMA)
+        if not seed_data:
+            print(f"完成：已在 schema {schema} 建立人事表（未灌假資料）。")
+            return
 
         # 部門
         dept_ids = {}

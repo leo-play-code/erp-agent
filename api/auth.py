@@ -20,13 +20,33 @@ import urllib.parse
 import urllib.request
 
 import jwt
+from dotenv import load_dotenv
 from fastapi import Header, HTTPException
 
 from tools.tenant import current_tenant_var  # 跨層共用的租戶 context（低層，api/tools 都能用）
 
+# 本模組在 import 當下就讀環境變數，且在 server.py 比會載入 .env 的 tools 更早被 import，
+# 故這裡自行 load_dotenv()，確保不論啟動方式都讀得到 .env 的 GOOGLE_CLIENT_ID / APP_JWT_SECRET。
+load_dotenv()
+
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 APP_JWT_SECRET = os.getenv("APP_JWT_SECRET", "dev-insecure-change-me")
-AUTH_ENABLED = bool(GOOGLE_CLIENT_ID)
+
+# 啟用哪些登入方式（前端登入頁據此顯示）：
+#   google = Google 登入（雲端）；local = 帳號密碼（管理員建帳號）；
+#   imap/ldap = 帳密表單，但向公司 mail/AD 驗證（每間公司於 companies.auth_method 指定實際驗法）。
+# AUTH_MODES 環境變數可明列（逗號分隔）；沒設時：有 GOOGLE_CLIENT_ID → google+local，否則單人免登入（向後相容）。
+_modes_env = os.getenv("AUTH_MODES", "").strip()
+if _modes_env:
+    AUTH_MODES = [m.strip() for m in _modes_env.split(",") if m.strip()]
+elif GOOGLE_CLIENT_ID:
+    AUTH_MODES = ["google", "local"]
+else:
+    AUTH_MODES = []
+# 登入頁有「帳密表單」(local/imap/ldap 任一) 或 Google 按鈕
+PASSWORD_LOGIN = any(m in AUTH_MODES for m in ("local", "imap", "ldap"))
+GOOGLE_LOGIN = "google" in AUTH_MODES
+AUTH_ENABLED = bool(AUTH_MODES)
 _ALG = "HS256"
 _TTL = 7 * 24 * 3600  # JWT 有效 7 天
 
@@ -48,12 +68,18 @@ def verify_google_id_token(id_token: str) -> dict:
     return {"sub": data["sub"], "email": data.get("email", ""), "name": data.get("name", "")}
 
 
-def issue_app_jwt(user: dict) -> str:
-    """簽一張自家 JWT（前端存著、之後每個 API 帶上）。"""
+def issue_app_jwt(user: dict, role: str = "employee", developer: bool = False) -> str:
+    """簽一張自家 JWT（前端存著、之後每個 API 帶上）。
+
+    內含 role / developer 兩個權限 claim：前端據此顯示「員工管理」「開發者 Agent」分頁，
+    claude-frontend 的 SSO 也用 developer claim 把關開發者席次。權限變更於下次登入刷新。
+    """
     payload = {
         "sub": user["sub"],
         "email": user.get("email", ""),
         "name": user.get("name", ""),
+        "role": role,
+        "developer": bool(developer),
         "exp": int(time.time()) + _TTL,
     }
     return jwt.encode(payload, APP_JWT_SECRET, algorithm=_ALG)
@@ -100,3 +126,40 @@ def current_tenant(authorization: str | None = Header(default=None)) -> str:
     tenant = tenant_of(user)
     current_tenant_var.set(tenant)
     return tenant
+
+
+# ── 角色 / 權限（RBAC）─────────────────────────────────────────────────
+# 讀「JWT 的 claim」做 gating（與前端看到的一致；權限變更於下次登入刷新）。授予/收回席次的
+# 「真實寫入與上限檢查」走 db.control_plane（DB 為單一真相）。未啟用 auth（單人模式）時一律放行。
+def role_of(user: dict | None) -> str:
+    if not AUTH_ENABLED:
+        return "company_admin"
+    return (user or {}).get("role", "employee")
+
+
+def is_company_admin(user: dict | None) -> bool:
+    return role_of(user) == "company_admin"
+
+
+def is_developer(user: dict | None) -> bool:
+    if not AUTH_ENABLED:
+        return True
+    return bool((user or {}).get("developer"))
+
+
+def require_company_admin(authorization: str | None = Header(default=None)) -> dict | None:
+    """FastAPI 依賴：限公司管理員。順帶設好 tenant contextvar。"""
+    user = current_user(authorization)
+    if not is_company_admin(user):
+        raise HTTPException(status_code=403, detail="需要公司管理員權限")
+    current_tenant_var.set(tenant_of(user))
+    return user
+
+
+def require_developer(authorization: str | None = Header(default=None)) -> dict | None:
+    """FastAPI 依賴：限擁有開發者席次者。"""
+    user = current_user(authorization)
+    if not is_developer(user):
+        raise HTTPException(status_code=403, detail="無開發者席次")
+    current_tenant_var.set(tenant_of(user))
+    return user

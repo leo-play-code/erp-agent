@@ -30,6 +30,11 @@ _agents = {name: cfg["build"](with_memory=False) for name, cfg in AGENTS.items()
 # 節點會偵測它、記下 pending_agent，並把標記從顯示內容中移除（使用者看不到）。
 ASK_MARKER = "[[ASK_USER]]"
 
+# 「開發者 Agent」是 claude-frontend（受權限控管的 coding agent），不在本圖內執行。
+# supervisor 可路由到這個哨兵 → 圖直接結束；API 層偵測到它、檢查使用者的開發者席次後，
+# 串流一個 {"type":"action","action":"open_dev_agent"} 讓前端切到開發者分頁。
+DEV_AGENT_ROUTE = "DEV_AGENT"
+
 
 class ERPState(MessagesState):
     """在內建的 messages 之外，額外帶兩個欄位。
@@ -47,8 +52,14 @@ class ERPState(MessagesState):
 _Route = create_model(
     "_Route",
     next=(
-        Literal[tuple(AGENTS) + ("FINISH",)],  # 例如 Literal["pdf","inventory","FINISH"]
-        Field(description="下一步要指派的 Agent；若需求已全部完成則填 FINISH。"),
+        # 例如 Literal["pdf","inventory","FINISH","DEV_AGENT"]
+        Literal[tuple(AGENTS) + ("FINISH", DEV_AGENT_ROUTE)],
+        Field(
+            description=(
+                "下一步要指派的 Agent；若需求已全部完成則填 FINISH；"
+                "若使用者明確要求『啟動開發者 Agent / 進開發者模式 / 寫程式改系統』則填 DEV_AGENT。"
+            )
+        ),
     ),
     __base__=BaseModel,
 )
@@ -75,7 +86,10 @@ _SUPERVISOR_PROMPT = SystemMessage(
         "是/否、或從選項中挑一個時，幾乎都是在回答『最近一個向他提問的 Agent』，請指派回那個 Agent。）\n"
         "4. 其餘情況：只有在使用者的需求『確實已產出最終結果』（已給出明確答案，或已產生"
         "可下載的檔案連結）時，才回答 FINISH。\n"
-        "5. 不要重複指派『已經產出最終結果』的 Agent；但第 3 點不受此限。"
+        "5. 不要重複指派『已經產出最終結果』的 Agent；但第 3 點不受此限。\n"
+        "6. 開發者 Agent：當使用者明確表示要『啟動開發者 Agent／進開發者模式／用 coding agent "
+        "改系統或寫程式』時，回答 DEV_AGENT（這不是上面的業務 Agent，而是切換到開發者工具）；"
+        "一般的 ERP 業務問題不要選 DEV_AGENT。"
     )
 )
 
@@ -151,11 +165,12 @@ def _build_graph():
         _entry_router,
         {**{name: name for name in AGENTS}, "supervisor": "supervisor"},
     )
-    # supervisor 依決策路由到某個 Agent，或結束
+    # supervisor 依決策路由到某個 Agent，或結束（FINISH / DEV_AGENT 都導向 END：
+    # DEV_AGENT 不在圖內執行，交由 API 層發切換分頁的 action）
     builder.add_conditional_edges(
         "supervisor",
         lambda state: state["route"],
-        {**{name: name for name in AGENTS}, "FINISH": END},
+        {**{name: name for name in AGENTS}, "FINISH": END, DEV_AGENT_ROUTE: END},
     )
     # 每個 Agent 跑完：在等使用者回覆就結束（交還使用者），否則回到 supervisor
     for name in AGENTS:

@@ -8,7 +8,12 @@ const BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 export function getToken(): string | null {
   return typeof window !== "undefined" ? localStorage.getItem("erp_token") : null;
 }
-export type AuthUser = { email: string; name: string };
+export type AuthUser = {
+  email: string;
+  name: string;
+  role?: string; // company_admin | employee
+  developer?: boolean; // 是否擁有開發者席次（顯示「開發者 Agent」分頁）
+};
 export function getUser(): AuthUser | null {
   if (typeof window === "undefined") return null;
   const s = localStorage.getItem("erp_user");
@@ -31,7 +36,13 @@ async function apiFetch(input: string, init: RequestInit = {}): Promise<Response
   return res;
 }
 
-export type AuthConfig = { auth_enabled: boolean; google_client_id: string };
+export type AuthConfig = {
+  auth_enabled: boolean;
+  google_client_id: string;
+  modes?: string[];
+  google_login?: boolean;
+  password_login?: boolean;
+};
 export async function getAuthConfig(): Promise<AuthConfig> {
   try {
     const res = await globalThis.fetch(`${BASE}/api/auth/config`);
@@ -39,6 +50,28 @@ export async function getAuthConfig(): Promise<AuthConfig> {
   } catch {
     return { auth_enabled: false, google_client_id: "" };
   }
+}
+
+// 修改自己的密碼（僅本地帳密帳號）。
+export async function changePassword(oldPassword: string, newPassword: string): Promise<void> {
+  const form = new FormData();
+  form.append("old_password", oldPassword);
+  form.append("new_password", newPassword);
+  const res = await apiFetch(`${BASE}/api/auth/change-password`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await errText(res, "修改密碼失敗"));
+}
+
+// 帳密登入（模式 A 本地 / B IMAP・LDAP）。成功後存 token+user，行為同 loginWithGoogle。
+export async function loginWithPassword(email: string, password: string): Promise<AuthUser> {
+  const form = new FormData();
+  form.append("email", email);
+  form.append("password", password);
+  const res = await globalThis.fetch(`${BASE}/api/auth/login`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await errText(res, "登入失敗"));
+  const data = await res.json();
+  localStorage.setItem("erp_token", data.token);
+  localStorage.setItem("erp_user", JSON.stringify(data.user));
+  return data.user as AuthUser;
 }
 
 // Google ID token → 自家 JWT；存起來（首次登入即註冊）。
@@ -242,10 +275,128 @@ export async function wikiPublishAll(items: WikiDraft[]): Promise<string> {
   return (await res.json()).text;
 }
 
+// ── 後台：公司人員管理（RBAC，限 company_admin）────────────────────────
+export type CompanyUser = {
+  sub: string;
+  email: string;
+  name: string;
+  role: string; // company_admin | employee
+  developer: boolean;
+};
+export type AdminUsers = { users: CompanyUser[]; dev_quota: number; dev_used: number };
+
+export async function adminListUsers(): Promise<AdminUsers> {
+  const res = await apiFetch(`${BASE}/api/admin/users`);
+  if (!res.ok) throw new Error(await errText(res, "無法取得人員清單"));
+  return res.json();
+}
+
+export async function adminCreateUser(
+  email: string, name: string, password: string, role = "employee"
+): Promise<CompanyUser> {
+  const form = new FormData();
+  form.append("email", email);
+  form.append("name", name);
+  if (password) form.append("password", password);
+  form.append("role", role);
+  const res = await apiFetch(`${BASE}/api/admin/users`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await errText(res, "建立員工失敗"));
+  return res.json();
+}
+
+export async function adminSetAuthMethod(method: string, config?: object): Promise<void> {
+  const form = new FormData();
+  form.append("method", method);
+  if (config) form.append("config", JSON.stringify(config));
+  const res = await apiFetch(`${BASE}/api/admin/auth-method`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await errText(res, "設定登入方式失敗"));
+}
+
+export async function adminSetRole(sub: string, role: string): Promise<CompanyUser> {
+  const form = new FormData();
+  form.append("role", role);
+  const res = await apiFetch(`${BASE}/api/admin/users/${encodeURIComponent(sub)}/role`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await errText(res, "設定角色失敗"));
+  return res.json();
+}
+
+export async function adminSetDeveloper(sub: string, on: boolean): Promise<CompanyUser> {
+  const form = new FormData();
+  form.append("on", String(on));
+  const res = await apiFetch(`${BASE}/api/admin/users/${encodeURIComponent(sub)}/developer`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await errText(res, "設定開發者席次失敗"));
+  return res.json();
+}
+
+// ── 公司站內信箱 ──────────────────────────────────────────────────────
+export type MailMessage = {
+  id: number;
+  subject: string;
+  body: string;
+  kind: string; // message | announcement
+  sender_sub: string | null;
+  sender_name: string | null;
+  sender_email: string | null;
+  recipient_id: number;
+  read_at: string | null;
+  created_at: string;
+};
+export type Notification = {
+  id: number;
+  kind: string;
+  title: string;
+  body: string;
+  link: string;
+  read_at: string | null;
+  created_at: string;
+};
+
+export async function mailboxInbox(): Promise<MailMessage[]> {
+  const res = await apiFetch(`${BASE}/api/mailbox/inbox`);
+  if (!res.ok) throw new Error("無法取得信箱");
+  return (await res.json()).messages;
+}
+
+export async function mailboxSend(recipients: string[], subject: string, body: string): Promise<void> {
+  const form = new FormData();
+  form.append("recipients", JSON.stringify(recipients));
+  form.append("subject", subject);
+  form.append("body", body);
+  const res = await apiFetch(`${BASE}/api/mailbox/send`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await errText(res, "寄信失敗"));
+}
+
+export async function mailboxMarkRead(recipientId: number): Promise<void> {
+  const form = new FormData();
+  form.append("recipient_id", String(recipientId));
+  await apiFetch(`${BASE}/api/mailbox/mark-read`, { method: "POST", body: form });
+}
+
+export async function mailboxAnnounce(subject: string, body: string): Promise<void> {
+  const form = new FormData();
+  form.append("subject", subject);
+  form.append("body", body);
+  const res = await apiFetch(`${BASE}/api/mailbox/announcement`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await errText(res, "發布公告失敗"));
+}
+
+export async function mailboxNotifications(): Promise<Notification[]> {
+  const res = await apiFetch(`${BASE}/api/mailbox/notifications`);
+  if (!res.ok) throw new Error("無法取得通知");
+  return (await res.json()).notifications;
+}
+
+export async function mailboxMarkNotificationsRead(notifId?: number): Promise<void> {
+  const form = new FormData();
+  if (notifId != null) form.append("notif_id", String(notifId));
+  await apiFetch(`${BASE}/api/mailbox/notifications/mark-read`, { method: "POST", body: form });
+}
+
 // 串流事件：supervisor 派 Agent(status)、某 Agent 的產出(message)、結束(done)、錯誤(error)
 export type ChatStreamEvent =
   | { type: "status"; agent: string }
   | { type: "message"; agent: string; content: string }
+  | { type: "action"; action: string } // 例：open_dev_agent → 前端切到開發者分頁
   | { type: "done" }
   | { type: "error"; detail: string };
 

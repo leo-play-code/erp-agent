@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { streamChat, listAgents, type ChatMessage } from "@/lib/api";
 import Markdown from "../components/Markdown";
 
@@ -88,6 +89,7 @@ const newConv = (): Conversation => ({
 });
 
 export default function ChatPage() {
+  const router = useRouter();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState("");
   const [input, setInput] = useState("");
@@ -202,6 +204,9 @@ export default function ChatPage() {
               updatedAt: Date.now(),
             }));
             setStatus(null);
+          } else if (ev.type === "action") {
+            // supervisor 要求啟動開發者 Agent：切換到開發者分頁（iframe 嵌入 claude-frontend）
+            if (ev.action === "open_dev_agent") router.push("/dev-agent");
           } else if (ev.type === "error") {
             hadError = true;
             setError(ev.detail);
